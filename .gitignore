@@ -1,0 +1,26 @@
+node_modules/
+dist/
+*.bak
+test-copy.xlsx*
+
+# Runtime backup folders created by backupWithRotation() — may contain real
+# personal data from whatever files the server was pointed at. Never commit.
+.backups/
+Resumes/.backups/
+
+# Gmail OAuth secrets — never commit these.
+credentials.json
+gmail_token.json
+
+# Scratch/junk files that sometimes accumulate during local testing.
+.npm-install.log
+__rmtest.txt
+
+# Personal job-search data files this server manages — these live in the
+# user's own Documents folder by default, never inside this repo, but are
+# excluded here too in case someone points JOB_*_FILE env vars at this folder.
+Job_Tracking.xlsx
+Job_Search_Discovery.xlsx
+Interview_Prep_QA.md
+resume_master.json
+Resumes/

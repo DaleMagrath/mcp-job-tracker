@@ -1,0 +1,31 @@
+{
+  "name": "mcp-job-tracker",
+  "version": "1.0.0",
+  "description": "MCP server to read and update a job-search tracking Excel spreadsheet through natural conversation.",
+  "type": "module",
+  "bin": {
+    "mcp-job-tracker": "dist/index.js"
+  },
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "test": "node test-client.mjs",
+    "pretest": "tsc",
+    "gmail:auth": "node scripts/gmail-authorize.mjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "google-auth-library": "^9.15.0",
+    "pdf-to-printer": "^5.8.0",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "typescript": "^5.7.2"
+  }
+}
