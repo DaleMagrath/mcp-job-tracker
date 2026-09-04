@@ -30,11 +30,13 @@ import { extractText } from "./extractText.js";
 import { buildResumeDocx, type ResumeSpec } from "./resumeDocx.js";
 
 const execFileAsync = promisify(execFile);
-// pdf-to-printer is CJS; load its silent-print function via require interop.
+// pdf-to-printer is CJS and Windows-only (it throws internally on any other
+// platform) — load it lazily via require interop only where it's actually used.
 const require = createRequire(import.meta.url);
-const { print: sumatraPrint } = require("pdf-to-printer") as {
-  print: (file: string, options?: { printer?: string }) => Promise<void>;
-};
+
+function isWindows(): boolean {
+  return process.platform === "win32";
+}
 
 /**
  * Ceiling on the inline base64 path. Base64 is emitted token-by-token by the
@@ -101,43 +103,76 @@ export function resumeFilesFor(company: string): string[] {
   }
 }
 
-/** Enumerate installed printers via PowerShell (robust; avoids the buggy
- *  getPrinters in pdf-to-printer). Returns [] if enumeration fails. */
+/** Enumerate installed printers. Windows uses PowerShell/CIM (robust; avoids
+ *  the buggy getPrinters in pdf-to-printer); macOS/Linux use CUPS's `lpstat`,
+ *  present by default on macOS and on any Linux with CUPS installed (the
+ *  normal case). Returns [] if enumeration fails or no print system exists. */
 async function listPrinters(): Promise<{ name: string; isDefault: boolean }[]> {
-  const psScript =
-    "Get-CimInstance Win32_Printer | Select-Object Name,Default | ConvertTo-Json -Compress";
+  if (isWindows()) {
+    const psScript =
+      "Get-CimInstance Win32_Printer | Select-Object Name,Default | ConvertTo-Json -Compress";
+    try {
+      const { stdout } = await execFileAsync(
+        "powershell.exe",
+        ["-NoProfile", "-NonInteractive", "-Command", psScript],
+        { windowsHide: true }
+      );
+      const text = stdout.trim();
+      if (!text) return [];
+      const raw = JSON.parse(text);
+      const arr = Array.isArray(raw) ? raw : [raw];
+      return arr.map((p: any) => ({
+        name: String(p.Name),
+        isDefault: p.Default === true,
+      }));
+    } catch {
+      return [];
+    }
+  }
+
   try {
-    const { stdout } = await execFileAsync(
-      "powershell.exe",
-      ["-NoProfile", "-NonInteractive", "-Command", psScript],
-      { windowsHide: true }
-    );
-    const text = stdout.trim();
-    if (!text) return [];
-    const raw = JSON.parse(text);
-    const arr = Array.isArray(raw) ? raw : [raw];
-    return arr.map((p: any) => ({
-      name: String(p.Name),
-      isDefault: p.Default === true,
-    }));
+    const [{ stdout: pOut }, defaultName] = await Promise.all([
+      execFileAsync("lpstat", ["-p"]),
+      execFileAsync("lpstat", ["-d"])
+        .then(({ stdout }) => /system default destination:\s*(\S+)/.exec(stdout)?.[1] ?? null)
+        .catch(() => null),
+    ]);
+    const printers: { name: string; isDefault: boolean }[] = [];
+    for (const line of pOut.split("\n")) {
+      const m = /^printer\s+(\S+)/.exec(line.trim());
+      if (m) printers.push({ name: m[1], isDefault: m[1] === defaultName });
+    }
+    return printers;
   } catch {
     return [];
   }
 }
 
-/** Locate a LibreOffice soffice.exe, if installed. */
-function findSoffice(): string | null {
-  const candidates = [
-    "C:\\Program Files\\LibreOffice\\program\\soffice.exe",
-    "C:\\Program Files (x86)\\LibreOffice\\program\\soffice.exe",
-  ];
-  return candidates.find((p) => fs.existsSync(p)) ?? null;
+/** Locate a LibreOffice executable, if installed — checked platform-specific
+ *  install locations first, falling back to a bare `soffice`/`soffice.exe`
+ *  (relies on PATH; the actual invocation's ENOENT reveals if that fails too). */
+function findSoffice(): string {
+  const candidates = isWindows()
+    ? [
+        "C:\\Program Files\\LibreOffice\\program\\soffice.exe",
+        "C:\\Program Files (x86)\\LibreOffice\\program\\soffice.exe",
+      ]
+    : process.platform === "darwin"
+    ? ["/Applications/LibreOffice.app/Contents/MacOS/soffice"]
+    : [
+        "/usr/bin/soffice",
+        "/usr/lib/libreoffice/program/soffice",
+        "/snap/bin/libreoffice.soffice",
+      ];
+  return candidates.find((p) => fs.existsSync(p)) ?? (isWindows() ? "soffice.exe" : "soffice");
 }
 
 /**
  * Convert a .docx to a .pdf next to it, so print_document always has a PDF.
  * Caches: reuses an existing PDF that is newer than the docx. Prefers
- * LibreOffice (silent headless), falls back to Microsoft Word via COM.
+ * LibreOffice (silent headless) everywhere; on Windows only, falls back to
+ * Microsoft Word via COM automation (no equivalent exists on macOS/Linux, so
+ * LibreOffice is the sole path there).
  */
 async function convertDocxToPdf(docxPath: string): Promise<string> {
   const pdfPath = docxPath.replace(/\.docx$/i, "") + ".pdf";
@@ -153,47 +188,53 @@ async function convertDocxToPdf(docxPath: string): Promise<string> {
     /* fall through and (re)convert */
   }
 
-  // 1) LibreOffice, if present.
+  // 1) LibreOffice, if present (or reachable via PATH).
   const soffice = findSoffice();
-  if (soffice) {
-    try {
-      await execFileAsync(
-        soffice,
-        ["--headless", "--convert-to", "pdf", "--outdir", path.dirname(pdfPath), docxPath],
-        { windowsHide: true }
-      );
-      if (fs.existsSync(pdfPath)) return pdfPath;
-    } catch {
-      /* fall through to Word */
-    }
-  }
-
-  // 2) Microsoft Word via COM (silent).
-  const escd = docxPath.replace(/'/g, "''");
-  const escp = pdfPath.replace(/'/g, "''");
-  const ps = [
-    "$ErrorActionPreference='Stop'",
-    "$w=New-Object -ComObject Word.Application",
-    "$w.Visible=$false",
-    "$w.DisplayAlerts=0",
-    "try{",
-    `  $d=$w.Documents.Open('${escd}',$false,$true)`,
-    `  $d.ExportAsFixedFormat('${escp}',17)`, // 17 = wdExportFormatPDF
-    "  $d.Close(0)",
-    "} finally { $w.Quit() }",
-  ].join(" ");
   try {
     await execFileAsync(
-      "powershell.exe",
-      ["-NoProfile", "-NonInteractive", "-Command", ps],
+      soffice,
+      ["--headless", "--convert-to", "pdf", "--outdir", path.dirname(pdfPath), docxPath],
       { windowsHide: true }
     );
-  } catch (err: any) {
+    if (fs.existsSync(pdfPath)) return pdfPath;
+  } catch {
+    /* fall through to Word on Windows; a hard error everywhere else */
+  }
+
+  // 2) Microsoft Word via COM (silent) — Windows only.
+  if (isWindows()) {
+    const escd = docxPath.replace(/'/g, "''");
+    const escp = pdfPath.replace(/'/g, "''");
+    const ps = [
+      "$ErrorActionPreference='Stop'",
+      "$w=New-Object -ComObject Word.Application",
+      "$w.Visible=$false",
+      "$w.DisplayAlerts=0",
+      "try{",
+      `  $d=$w.Documents.Open('${escd}',$false,$true)`,
+      `  $d.ExportAsFixedFormat('${escp}',17)`, // 17 = wdExportFormatPDF
+      "  $d.Close(0)",
+      "} finally { $w.Quit() }",
+    ].join(" ");
+    try {
+      await execFileAsync(
+        "powershell.exe",
+        ["-NoProfile", "-NonInteractive", "-Command", ps],
+        { windowsHide: true }
+      );
+    } catch (err: any) {
+      throw new UserFacingError(
+        "Could not convert the .docx to PDF for printing — this needs LibreOffice " +
+          "or Microsoft Word installed. Alternatively, save the document as a PDF " +
+          "and print that directly.\n" +
+          `Details: ${err?.stderr || err?.message || String(err)}`
+      );
+    }
+  } else if (!fs.existsSync(pdfPath)) {
     throw new UserFacingError(
       "Could not convert the .docx to PDF for printing — this needs LibreOffice " +
-        "or Microsoft Word installed. Alternatively, save the document as a PDF " +
-        "and print that directly.\n" +
-        `Details: ${err?.stderr || err?.message || String(err)}`
+        "installed (Microsoft Word's automated PDF export isn't available on " +
+        "this OS). Alternatively, save the document as a PDF and print that directly."
     );
   }
   if (!fs.existsSync(pdfPath)) {
@@ -202,6 +243,32 @@ async function convertDocxToPdf(docxPath: string): Promise<string> {
     );
   }
   return pdfPath;
+}
+
+/** Send a PDF to a printer, silently. Windows uses pdf-to-printer (bundles
+ *  SumatraPDF); macOS/Linux use CUPS's `lp`, present by default on macOS and
+ *  on any Linux with CUPS installed. `lp`/`lpr` are non-interactive already,
+ *  matching the "silent" requirement without an extra flag. */
+async function printFile(pdfPath: string, printerName?: string): Promise<void> {
+  if (isWindows()) {
+    const { print: sumatraPrint } = require("pdf-to-printer") as {
+      print: (file: string, options?: { printer?: string }) => Promise<void>;
+    };
+    await sumatraPrint(pdfPath, printerName ? { printer: printerName } : {});
+    return;
+  }
+  const args = printerName ? ["-d", printerName, pdfPath] : [pdfPath];
+  try {
+    await execFileAsync("lp", args);
+  } catch (err: any) {
+    if (err?.code === "ENOENT") {
+      throw new UserFacingError(
+        "No print system found (`lp` is not on PATH). This needs CUPS installed " +
+          "— it ships by default on macOS; on Linux, install your distro's cups package."
+      );
+    }
+    throw err;
+  }
 }
 
 /** Sanitize a string into a safe filename fragment. */
@@ -601,8 +668,9 @@ export function register(server: McpServer): void {
         }
 
         try {
-          await sumatraPrint(pdfPath, printerName ? { printer: printerName } : {});
+          await printFile(pdfPath, printerName || undefined);
         } catch (err: any) {
+          if (err instanceof UserFacingError) throw err;
           throw new UserFacingError(
             `Failed to send the print job: ${err?.message || String(err)}`
           );

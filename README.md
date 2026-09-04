@@ -28,7 +28,7 @@ scans for updates on tracked roles, and drafts/sends replies — see *Gmail inte
 - **Schema:** dynamic — driven by each sheet's header row (custom columns supported)
 - **Resumes:** `.docx` built in-process with the [`docx`](https://www.npmjs.com/package/docx) package; `.pdf`/`.docx` text extraction via [`pdf-parse`](https://www.npmjs.com/package/pdf-parse) + [`mammoth`](https://www.npmjs.com/package/mammoth)
 - **Board sweep:** `run_job_sweep` probes ATS job boards directly over HTTP (native `fetch`), in-process — no external script
-- **Printing:** silent PDF printing via [`pdf-to-printer`](https://www.npmjs.com/package/pdf-to-printer) (bundles SumatraPDF); `.docx` is converted to PDF first using LibreOffice or Microsoft Word if either is installed (optional — see *Safety & behavior notes*)
+- **Printing:** silent PDF printing — [`pdf-to-printer`](https://www.npmjs.com/package/pdf-to-printer) (bundles SumatraPDF) on Windows, CUPS's `lp` on macOS/Linux; `.docx` is converted to PDF first using LibreOffice (any OS) or Microsoft Word (Windows only) if installed (optional — see *Safety & behavior notes*)
 - **Client:** Claude Desktop or Claude Code (see config below)
 
 ## Build
@@ -40,11 +40,13 @@ npm run build
 ```
 
 This produces `dist/index.js`. `npm install` pulls everything this server needs —
-`pdf-to-printer` (bundles SumatraPDF for silent PDF printing, no separate install),
+`pdf-to-printer` (bundles SumatraPDF for silent Windows printing, no separate
+install; macOS/Linux print through CUPS's `lp` instead, no npm package needed),
 `exceljs`, `docx`, `pdf-parse`, `mammoth` — all pure JS, nothing to compile and no
-Python. The one optional *external* dependency is **LibreOffice** or **Microsoft
-Word**, used only to convert a generated resume's `.docx` to `.pdf`; if neither is
-installed, `generate_resume` still produces the `.docx` and says so. The optional
+Python. The one optional *external* dependency is **LibreOffice** (any OS) or
+**Microsoft Word** (Windows only), used only to convert a generated resume's
+`.docx` to `.pdf`; if none is installed, `generate_resume` still produces the
+`.docx` and says so. The optional
 Gmail tools need a one-time `npm run gmail:auth` (see *Gmail integration*).
 
 ## Configure Claude Desktop
@@ -340,7 +342,10 @@ Hard-won details worth keeping — changing them tends to reintroduce old bugs:
 - **LibreOffice does the docx→PDF, not Word.** LibreOffice subsets fonts →
   ~55 KB with Liberation Serif, matching the existing resumes. Word barely subsets
   (embedded ~1.1 MB of Calibri → a 258 KB PDF), so `convertDocxToPdf` prefers
-  LibreOffice and falls back to Word only if it's absent.
+  LibreOffice and falls back to Word only if it's absent — and only on Windows;
+  macOS/Linux have no COM automation to fall back to, so LibreOffice is the sole
+  path there (checked at `/Applications/LibreOffice.app/...` on macOS, common
+  Linux install paths, then bare `soffice` on PATH).
 - **2-page fit is by layout, never by truncation.** A full experience history +
   6-bullet Key Qualifications + Projects + Education + Skills lands on 2 pages with
   **Honors & Awards off** (opt in with `include_honors`). If it ever runs long, the
@@ -371,12 +376,14 @@ print_document  { "filename": "sample.pdf", "printer_name": "Office EPSON ET-385
 > Inline base64 is therefore capped at 20 000 characters and fails immediately
 > with a pointer to `source_path`.
 
-- **PDFs** print directly via SumatraPDF (bundled with `pdf-to-printer`); no
-  dialog, single copy, default settings.
+- **PDFs** print directly — via SumatraPDF (bundled with `pdf-to-printer`) on
+  Windows, or CUPS's `lp` on macOS/Linux (present by default on macOS, and on
+  any Linux with CUPS installed). No dialog, single copy, default settings
+  either way.
 - **`.docx`** is converted to a PDF next to it first — using LibreOffice
-  (`soffice --headless --convert-to pdf`) if installed, otherwise Microsoft
-  Word via COM. The PDF is cached and reused while it's newer than the docx.
-  If neither LibreOffice nor Word is available, printing a `.docx` returns a
+  (`soffice --headless --convert-to pdf`) if installed, otherwise (Windows
+  only) Microsoft Word via COM. The PDF is cached and reused while it's newer
+  than the docx. If no converter is available, printing a `.docx` returns a
   clear error suggesting you save it as a PDF instead.
 - `print_document` confirms the job was **sent** to the printer — not that it
   physically finished. Base64 transport is meant for small files (resumes,
