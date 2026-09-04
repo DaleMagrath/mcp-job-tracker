@@ -108,6 +108,12 @@ new machine:
 
 ## Tools
 
+### Setup
+
+| Tool | What it does |
+|------|--------------|
+| `init_job_tracker_files` | Bootstrap a fresh machine/profile: creates the Job Tracking root folder if missing, and creates `Job_Tracking.xlsx` and/or `Job_Search_Discovery.xlsx` from a blank, formatted template (header row only) for whichever is missing. Never touches a file that already exists. |
+
 | Tool | What it does |
 |------|--------------|
 | `list_jobs` | List all rows. Optional filters: `status` (case-insensitive exact), `company` (substring), and a `applied_from` / `applied_to` date range (YYYY-MM-DD). |

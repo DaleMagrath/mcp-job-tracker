@@ -167,3 +167,24 @@ export const DISCOVERY: SheetSpec = {
   dateColumnsLC: new Set<string>(),
   matchColumns: ["Company", "Position"],
 };
+
+/** The board-sweep script (sweep.py) and its JSON output: JOB_SWEEP_SCRIPT,
+ *  else the daily-job-search-top5 scheduled task's copy. sweep_out.json is
+ *  always a sibling of the script (that's where sweep.py itself writes it). */
+function resolveSweepScriptPath(): string {
+  const fromEnv = process.env.JOB_SWEEP_SCRIPT;
+  const chosen =
+    (fromEnv && fromEnv.trim()) ||
+    path.join(
+      os.homedir(),
+      ".claude",
+      "scheduled-tasks",
+      "daily-job-search-top5",
+      "sweep.py"
+    );
+  return path.resolve(chosen);
+}
+
+export const SWEEP_SCRIPT = resolveSweepScriptPath();
+export const SWEEP_DIR = path.dirname(SWEEP_SCRIPT);
+export const SWEEP_OUT_FILE = path.join(SWEEP_DIR, "sweep_out.json");

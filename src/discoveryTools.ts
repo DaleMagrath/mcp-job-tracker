@@ -34,21 +34,23 @@ const DISCOVERY_MATCH_LC = new Set<string>(["company", "position"]);
 const DISCOVERY_DEFAULT_STATUS = "Open";
 
 /**
- * Re-apply the standard formatting to the discovery workbook after an MCP write.
- * The SheetJS write handles the row data but doesn't re-serialize rich styling;
- * this openpyxl pass restores the bold header / freeze / auto-filter / links /
- * widths so MCP edits match what the daily task produces. Best-effort: returns
- * false (with a reason) if Python or openpyxl isn't available, rather than
- * failing the whole tool call — the data write already succeeded.
+ * Re-apply the standard formatting (bold header, freeze/auto-filter, wrapped
+ * text, sensible widths, clickable Job Link cells) to any workbook whose
+ * first sheet has a header row — the format_discovery.py script itself is
+ * schema-agnostic despite the name. Best-effort: returns false (with a
+ * reason) if Python or openpyxl isn't available, rather than failing the
+ * whole tool call — the data write already succeeded.
  */
-async function reformatDiscoveryFile(): Promise<{ ok: boolean; detail?: string }> {
+export async function formatWorkbookFile(
+  filePath: string
+): Promise<{ ok: boolean; detail?: string }> {
   const script = path.join(SERVER_DIR, "..", "scripts", "format_discovery.py");
   if (!fs.existsSync(script)) {
     return { ok: false, detail: "formatter script not found" };
   }
   for (const py of ["python", "py"]) {
     try {
-      await execFileAsync(py, [script, DISCOVERY.filePath], { windowsHide: true });
+      await execFileAsync(py, [script, filePath], { windowsHide: true });
       return { ok: true };
     } catch (err: any) {
       if (err?.code === "ENOENT") continue; // this interpreter isn't installed
@@ -59,6 +61,12 @@ async function reformatDiscoveryFile(): Promise<{ ok: boolean; detail?: string }
     ok: false,
     detail: "Python not found — install Python + openpyxl to keep discovery formatting.",
   };
+}
+
+/** Same as {@link formatWorkbookFile}, pinned to the discovery workbook —
+ *  kept for existing call sites within this file. */
+export async function reformatDiscoveryFile(): Promise<{ ok: boolean; detail?: string }> {
+  return formatWorkbookFile(DISCOVERY.filePath);
 }
 
 export function register(server: McpServer): void {

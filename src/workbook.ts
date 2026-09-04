@@ -95,7 +95,17 @@ export function openWorkbook(spec: SheetSpec = TRACKER): SheetHandle {
 
   let wb: XLSX.WorkBook;
   try {
-    wb = XLSX.readFile(filePath, { cellStyles: true, cellNF: true });
+    // NOTE: do not pass `cellStyles: true` here (or to XLSX.writeFile below).
+    // This SheetJS CE build (xlsx-0.20.3) round-trips the workbook theme part
+    // as a raw string, and repeated read+write with cellStyles enabled
+    // re-encodes that string on every pass — each pass roughly *doubles*
+    // xl/theme/theme1.xml (byte pattern shows classic Latin-1/UTF-8 mojibake:
+    // 0xC2/0xC3 lead bytes multiplying). Because the corrupted content is
+    // highly repetitive, it still compresses to a small .xlsx on disk, so the
+    // bug is invisible in `ls -la` until it eventually degrades enough to
+    // compress poorly — at which point the file balloons to tens/hundreds of
+    // MB. cellNF alone (parsing number formats) does not trigger this.
+    wb = XLSX.readFile(filePath, { cellNF: true });
   } catch (err) {
     throw wrapFsError(err, "read", filePath);
   }
@@ -258,7 +268,9 @@ export function backupFile(h: SheetHandle): string {
 
 export function saveWorkbook(h: SheetHandle): void {
   try {
-    XLSX.writeFile(h.wb, h.spec.filePath, { cellStyles: true });
+    // See the matching note in openWorkbook(): cellStyles must stay off here
+    // too, or the theme part corrupts and roughly doubles in size every write.
+    XLSX.writeFile(h.wb, h.spec.filePath, {});
   } catch (err) {
     throw wrapFsError(err, "write", h.spec.filePath);
   }
@@ -298,17 +310,24 @@ export function writeCell(
     cell = { t: "s", v: String(value) };
     if (template && template.z) cell.z = template.z;
   }
-  // Best-effort style carry-over (cell fonts/fills). Harmless if unsupported.
-  if (template && (template as any).s) (cell as any).s = (template as any).s;
+  // Note: per-cell style objects (cell.s — fonts/fills) are intentionally not
+  // read or carried forward. See the cellStyles note in openWorkbook/
+  // saveWorkbook — enabling that option corrupts the workbook theme part.
+  // Number formats (z) and column widths (!cols) are unaffected and still work.
 
   h.ws[addr] = cell;
 }
 
-/** Extend the sheet's !ref so it includes `row`. */
+/** Extend the sheet's !ref so it includes `row`, and keep the handle's own
+ *  lastDataRow in sync. Without the second part, a second appendRow on the
+ *  same handle would recompute its insertion point from readAllRecords(h) —
+ *  which loops firstDataRow..lastDataRow — and never see the first append,
+ *  landing on (and overwriting) the same row again. */
 export function growRange(h: SheetHandle, row: number): void {
   const r = XLSX.utils.decode_range(h.ws["!ref"]!);
   if (row > r.e.r) r.e.r = row;
   h.ws["!ref"] = XLSX.utils.encode_range(r);
+  if (row > h.lastDataRow) h.lastDataRow = row;
 }
 
 /**
