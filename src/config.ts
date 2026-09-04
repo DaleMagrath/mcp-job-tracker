@@ -6,9 +6,9 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
-/** Directory of the running server file (dist/), for locating sibling scripts.
- *  Computed here so it compiles to the dist root (dist/config.js), keeping the
- *  "../scripts/format_discovery.py" lookup correct. */
+/** Directory of the running server file (dist/), for locating project-root
+ *  siblings (see gmailConfig.ts's PROJECT_ROOT). Computed here so it compiles
+ *  to the dist root (dist/config.js), keeping that "../" lookup correct. */
 export const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 /**
@@ -168,23 +168,19 @@ export const DISCOVERY: SheetSpec = {
   matchColumns: ["Company", "Position"],
 };
 
-/** The board-sweep script (sweep.py) and its JSON output: JOB_SWEEP_SCRIPT,
- *  else the daily-job-search-top5 scheduled task's copy. sweep_out.json is
- *  always a sibling of the script (that's where sweep.py itself writes it). */
-function resolveSweepScriptPath(): string {
-  const fromEnv = process.env.JOB_SWEEP_SCRIPT;
-  const chosen =
-    (fromEnv && fromEnv.trim()) ||
-    path.join(
-      os.homedir(),
-      ".claude",
-      "scheduled-tasks",
-      "daily-job-search-top5",
-      "sweep.py"
-    );
-  return path.resolve(chosen);
-}
+/**
+ * Board-sweep state (sweepEngine.ts runs in-process — no external script).
+ * All three are JOB_ROOT siblings, the same folder as the workbooks:
+ *   - SWEEP_HEALTH_FILE: per-board reachability cache (skips known-dead
+ *     boards on a `quick` sweep).
+ *   - SWEEP_OUT_FILE: full detail for every candidate from the last sweep
+ *     (including already-known ones the tool result suppresses).
+ *   - RUN_LOG_FILE: one-line-per-run audit trail, shared with discovery_sync.
+ */
+export const SWEEP_HEALTH_FILE = path.join(JOB_ROOT, "board_health.json");
+export const SWEEP_OUT_FILE = path.join(JOB_ROOT, "sweep_out.json");
+export const RUN_LOG_FILE = path.join(JOB_ROOT, "run_log.txt");
 
-export const SWEEP_SCRIPT = resolveSweepScriptPath();
-export const SWEEP_DIR = path.dirname(SWEEP_SCRIPT);
-export const SWEEP_OUT_FILE = path.join(SWEEP_DIR, "sweep_out.json");
+/** Persisted job-search criteria (location/work-style/salary/titles + free-
+ *  text notes) — prompted for once, then reused by run_job_sweep. */
+export const SEARCH_CRITERIA_FILE = path.join(JOB_ROOT, "search_criteria.json");

@@ -2,15 +2,11 @@
  * Discovery-sheet tools (Job_Search_Discovery.xlsx).
  */
 
-import * as fs from "node:fs";
-import * as path from "node:path";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { UserFacingError, textResult, guard } from "./errors.js";
 import { isoToSerial, todayISO } from "./dates.js";
-import { SERVER_DIR, DISCOVERY, TRACKER } from "./config.js";
+import { DISCOVERY, TRACKER } from "./config.js";
 import {
   openWorkbook,
   readAllRecords,
@@ -26,42 +22,11 @@ import {
   saveWorkbook,
   resolveFieldWrites,
 } from "./workbook.js";
-
-const execFileAsync = promisify(execFile);
+import { formatWorkbookFile } from "./xlsxFormat.js";
 
 /** Discovery columns set through their own parameter, not `fields`. */
 const DISCOVERY_MATCH_LC = new Set<string>(["company", "position"]);
 const DISCOVERY_DEFAULT_STATUS = "Open";
-
-/**
- * Re-apply the standard formatting (bold header, freeze/auto-filter, wrapped
- * text, sensible widths, clickable Job Link cells) to any workbook whose
- * first sheet has a header row — the format_discovery.py script itself is
- * schema-agnostic despite the name. Best-effort: returns false (with a
- * reason) if Python or openpyxl isn't available, rather than failing the
- * whole tool call — the data write already succeeded.
- */
-export async function formatWorkbookFile(
-  filePath: string
-): Promise<{ ok: boolean; detail?: string }> {
-  const script = path.join(SERVER_DIR, "..", "scripts", "format_discovery.py");
-  if (!fs.existsSync(script)) {
-    return { ok: false, detail: "formatter script not found" };
-  }
-  for (const py of ["python", "py"]) {
-    try {
-      await execFileAsync(py, [script, filePath], { windowsHide: true });
-      return { ok: true };
-    } catch (err: any) {
-      if (err?.code === "ENOENT") continue; // this interpreter isn't installed
-      return { ok: false, detail: err?.stderr || err?.message || String(err) };
-    }
-  }
-  return {
-    ok: false,
-    detail: "Python not found — install Python + openpyxl to keep discovery formatting.",
-  };
-}
 
 /** Same as {@link formatWorkbookFile}, pinned to the discovery workbook —
  *  kept for existing call sites within this file. */

@@ -79,9 +79,11 @@ const xlsxPath = path.resolve(
 );
 if (!fs.existsSync(xlsxPath)) {
   console.warn(
-    `[setup] WARNING: spreadsheet not found at ${xlsxPath}.\n` +
-      "         The server will report a clear error until the file exists there.\n" +
-      "         Re-run with the correct path if this is wrong: node setup.mjs <path>"
+    `[setup] NOTE: spreadsheet not found at ${xlsxPath}.\n` +
+      "       The server will report a clear error on most tools until it exists there —\n" +
+      "       either copy an existing Job_Tracking.xlsx into place, or call this server's\n" +
+      "       init_job_tracker_files tool once to create a blank one at that path.\n" +
+      "       Re-run with the correct path if this is wrong: node setup.mjs <path>"
   );
 }
 

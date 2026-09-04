@@ -22,11 +22,12 @@ import {
 import {
   RESUMES_DIR,
   RESUME_MASTER_FILE,
-  SERVER_DIR,
   TRACKER,
   DISCOVERY,
   JOB_ROOT,
 } from "./config.js";
+import { extractText } from "./extractText.js";
+import { buildResumeDocx, type ResumeSpec } from "./resumeDocx.js";
 
 const execFileAsync = promisify(execFile);
 // pdf-to-printer is CJS; load its silent-print function via require interop.
@@ -201,33 +202,6 @@ async function convertDocxToPdf(docxPath: string): Promise<string> {
     );
   }
   return pdfPath;
-}
-
-/** Run a bundled Python script (trying "python" then "py"), returning stdout. */
-async function runPython(scriptRelPath: string, args: string[]): Promise<string> {
-  const script = path.join(SERVER_DIR, "..", "scripts", scriptRelPath);
-  if (!fs.existsSync(script)) {
-    throw new UserFacingError(`Script not found: ${script}`);
-  }
-  for (const py of ["python", "py"]) {
-    try {
-      const { stdout } = await execFileAsync(py, [script, ...args], {
-        windowsHide: true,
-        maxBuffer: 32 * 1024 * 1024,
-      });
-      return stdout;
-    } catch (err: any) {
-      if (err?.code === "ENOENT") continue; // this interpreter isn't installed
-      throw new UserFacingError(
-        `Python script ${scriptRelPath} failed: ` +
-          `${err?.stderr || err?.message || String(err)}`
-      );
-    }
-  }
-  throw new UserFacingError(
-    "Python was not found. This server's document tools need Python installed " +
-      "(with pypdf / python-docx for text extraction and resume generation)."
-  );
 }
 
 /** Sanitize a string into a safe filename fragment. */
@@ -788,9 +762,9 @@ export function register(server: McpServer): void {
           );
         }
 
-        let parsed: any;
+        let parsed: Awaited<ReturnType<typeof extractText>>;
         try {
-          parsed = JSON.parse(await runPython("extract_text.py", [target]));
+          parsed = await extractText(target);
         } catch (err) {
           if (err instanceof UserFacingError) throw err;
           throw new UserFacingError(
@@ -835,7 +809,8 @@ export function register(server: McpServer): void {
         "resume_master.json; YOU supply only the per-posting tailoring: a rewritten " +
         "`summary` and the `key_qualifications` bullets aligning the candidate to " +
         "this specific `company` + `position`. The server renders the master + your " +
-        "tailoring into a formatted PDF (python-docx + LibreOffice) matching the " +
+        "tailoring into a formatted PDF (docx built in-process, converted via " +
+          "LibreOffice or Microsoft Word if installed) matching the " +
         "existing resumes. Do NOT invent employers, dates, or degrees — those are " +
         "fixed in the master. Returns the saved path and size, plus a `nextStep` " +
         "with a suggested follow-up call (add_job / promote_to_tracker / " +
@@ -954,13 +929,9 @@ export function register(server: McpServer): void {
         const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "genresume-"));
         let produced: string;
         try {
-          const specPath = path.join(tmp, "spec.json");
           const docxPath = path.join(tmp, "resume.docx");
-          fs.writeFileSync(specPath, JSON.stringify(spec), "utf8");
-          await runPython("gen_resume.py", [specPath, docxPath]);
-          if (!fs.existsSync(docxPath)) {
-            throw new UserFacingError("Generator ran but produced no .docx.");
-          }
+          const docxBuffer = await buildResumeDocx(spec as ResumeSpec);
+          fs.writeFileSync(docxPath, docxBuffer);
           produced = format === "pdf" ? await convertDocxToPdf(docxPath) : docxPath;
 
           const head = Buffer.alloc(8);

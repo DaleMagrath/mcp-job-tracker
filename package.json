@@ -19,13 +19,18 @@
   "license": "ISC",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "docx": "^9.5.1",
+    "exceljs": "^4.4.0",
     "google-auth-library": "^9.15.0",
+    "mammoth": "^1.12.2",
+    "pdf-parse": "^1.1.1",
     "pdf-to-printer": "^5.8.0",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^22.20.1",
+    "@types/pdf-parse": "^1.1.5",
     "typescript": "^5.7.2"
   }
 }

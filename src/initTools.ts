@@ -15,7 +15,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { textResult, guard } from "./errors.js";
 import { ensureDir } from "./workbook.js";
 import { JOB_ROOT, TRACKER, DISCOVERY, COLUMNS, DISCOVERY_COLUMNS } from "./config.js";
-import { formatWorkbookFile } from "./discoveryTools.js";
+import { formatWorkbookFile } from "./xlsxFormat.js";
 
 /** Write a blank workbook with just a header row for the given columns. */
 function createTemplateWorkbook(filePath: string, columns: readonly string[]): void {

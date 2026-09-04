@@ -22,11 +22,13 @@ and `print_document` write generated docs to the `Resumes\` folder and print the
 optional **Gmail integration** (five tools) searches your inbox for recruiter mail,
 scans for updates on tracked roles, and drafts/sends replies — see *Gmail integration*.
 
-- **Runtime:** Node.js + TypeScript
+- **Runtime:** Node.js + TypeScript — **no Python or other external interpreter required**
 - **Transport:** stdio (local process — no networking, no auth)
-- **Data source:** your `.xlsx` files, read/written with [SheetJS (`xlsx`)](https://sheetjs.com)
+- **Data source:** your `.xlsx` files, read/written with [SheetJS (`xlsx`)](https://sheetjs.com); styling (bold header, freeze/auto-filter, hyperlinks) via [`exceljs`](https://www.npmjs.com/package/exceljs)
 - **Schema:** dynamic — driven by each sheet's header row (custom columns supported)
-- **Printing:** silent PDF printing via [`pdf-to-printer`](https://www.npmjs.com/package/pdf-to-printer) (bundles SumatraPDF); `.docx` is converted to PDF first using LibreOffice or Microsoft Word
+- **Resumes:** `.docx` built in-process with the [`docx`](https://www.npmjs.com/package/docx) package; `.pdf`/`.docx` text extraction via [`pdf-parse`](https://www.npmjs.com/package/pdf-parse) + [`mammoth`](https://www.npmjs.com/package/mammoth)
+- **Board sweep:** `run_job_sweep` probes ATS job boards directly over HTTP (native `fetch`), in-process — no external script
+- **Printing:** silent PDF printing via [`pdf-to-printer`](https://www.npmjs.com/package/pdf-to-printer) (bundles SumatraPDF); `.docx` is converted to PDF first using LibreOffice or Microsoft Word if either is installed (optional — see *Safety & behavior notes*)
 - **Client:** Claude Desktop or Claude Code (see config below)
 
 ## Build
@@ -37,16 +39,13 @@ npm install
 npm run build
 ```
 
-This produces `dist/index.js`. `npm install` also pulls `pdf-to-printer`, which
-bundles SumatraPDF for silent PDF printing (no separate install). Printing
-`.docx` additionally requires **LibreOffice** or **Microsoft Word** for the
-docx→PDF conversion step; PDFs need neither. Keeping the discovery sheet's
-formatting on MCP writes uses **Python + `openpyxl`** (`scripts/format_discovery.py`);
-optional — writes still succeed without it. `generate_resume` needs **Python +
-`python-docx`** (`scripts/gen_resume.py`) plus **LibreOffice** (matches the
-existing resumes' look) for its PDF step. `read_document` uses **Python +
-`pypdf`** (PDFs) and `python-docx` (docx) via `scripts/extract_text.py`. The
-optional Gmail tools need a one-time `npm run gmail:auth` (see *Gmail integration*).
+This produces `dist/index.js`. `npm install` pulls everything this server needs —
+`pdf-to-printer` (bundles SumatraPDF for silent PDF printing, no separate install),
+`exceljs`, `docx`, `pdf-parse`, `mammoth` — all pure JS, nothing to compile and no
+Python. The one optional *external* dependency is **LibreOffice** or **Microsoft
+Word**, used only to convert a generated resume's `.docx` to `.pdf`; if neither is
+installed, `generate_resume` still produces the `.docx` and says so. The optional
+Gmail tools need a one-time `npm run gmail:auth` (see *Gmail integration*).
 
 ## Configure Claude Desktop
 
@@ -89,8 +88,12 @@ The server is portable (plain Node stdio — Windows or macOS). To set it up on 
 new machine:
 
 1. Copy this project folder over (you can skip `node_modules` and `dist`).
-2. Copy your `Job_Tracking.xlsx` to the new machine.
-3. Make sure Node.js 18+ is installed (`node --version`).
+2. Copy your `Job_Tracking.xlsx` to the new machine — or, for a genuinely fresh
+   start with no existing spreadsheet, skip this step and call the
+   `init_job_tracker_files` tool once the server is running; it creates the
+   folder and both blank, formatted workbooks for you.
+3. Make sure Node.js 18+ is installed (`node --version`). Nothing else — no
+   Python, no other interpreter — is required for the server itself.
 4. Run the installer, pointing it at your spreadsheet:
 
    ```bash
@@ -139,6 +142,15 @@ new machine:
 | `discovery_update` | Edit a lead matched by `company` + `position`. Rename via `new_company` / `new_position`; set columns via `fields` (empty string clears). |
 | `discovery_delete` | Remove a lead matched by `company` + `position`, returning the deleted row so it can be re-added. |
 | `promote_to_tracker` | Copy a lead into the tracker as an application — maps Company/Position/Job Link/Location, sets Status **Applied** and Date Applied **today** (both overridable), and folds Salary + Match Assessment into Notes. Refuses to create a duplicate tracker row. Optional `remove_from_discovery` moves it instead of copying. |
+| `discovery_sync` | Housekeeping + append in one call: drops discovery rows whose Company+Position now matches a tracker application, flags anything 60+ days old **Stale (60+ days)**, then appends `new_rows` (refusing duplicates by Company+Position, Job Link, or an existing tracker application). Pass an empty array to run housekeeping alone. Prefer this over repeated `discovery_add` calls when processing a sweep's results. |
+
+### Search criteria & board sweep
+
+| Tool | What it does |
+|------|--------------|
+| `get_search_criteria` | Return the saved search criteria (`search_criteria.json`): target job titles, work style (remote/hybrid/onsite), city/country, minimum annual salary, and a free-text `notes` field. On a fresh install nothing is saved yet — the result's `isComplete` is `false` and `promptsNeeded` lists exactly what to ask the user before calling `update_search_criteria`. |
+| `update_search_criteria` | Create or update the saved criteria. Every field is optional — only what you pass changes. Backs up the previous file first. |
+| `run_job_sweep` | Probe ~95 Greenhouse/Ashby/Lever/SmartRecruiters/Workday boards concurrently (in-process, plain HTTP — no external script), filter to engineering-leadership titles whose location plausibly matches the saved criteria, fetch salary/posted-date detail, HTTP-check links, and dedupe against both spreadsheets. Returns only new candidates. Refuses to run until search criteria are complete. Optional `quick: true` skips boards the last run recorded as unreachable. |
 
 ### Interview-prep tools (`Interview_Prep_QA.md`)
 
@@ -151,7 +163,7 @@ new machine:
 
 | Tool | What it does |
 |------|--------------|
-| `generate_resume` | **Generate a tailored resume PDF (or docx) host-side and save it to `Resumes\` — no base64, works from Claude Desktop.** Stable facts (employers, dates, education, skills) come from `resume_master.json`; the model supplies only the per-posting `summary` + `key_qualifications` bullets for a `company` + `position`. Rendered via python-docx + LibreOffice to match the existing resumes. See the workflow below. |
+| `generate_resume` | **Generate a tailored resume PDF (or docx) host-side and save it to `Resumes\` — no base64, works from Claude Desktop.** Stable facts (employers, dates, education, skills) come from `resume_master.json`; the model supplies only the per-posting `summary` + `key_qualifications` bullets for a `company` + `position`. The `.docx` is built in-process (the `docx` package); PDF output converts that via LibreOffice or Word if either is installed. See the workflow below. |
 | `save_document` | Save a `.docx`/`.pdf` into the `Resumes\` folder (created if missing). Takes **`source_path`** (preferred — an absolute path to a file already on disk, copied instantly) *or* `content_base64` (fallback, small files only — capped at 20 000 chars ≈ 15 KB). Validates the leading bytes match the extension. Refuses to overwrite unless `overwrite: true`, backing the old file up first. Returns the saved path and size. |
 | `print_document` | Silently print a saved file (name in `Resumes\`, or a full path) to the default or a named printer. PDFs print directly; `.docx` is converted to PDF first (cached next to the docx). Lists available printers if a bad name is given. Confirms the job was **sent**, not physically finished. |
 | `read_document` | Extract the plain text of a saved `.pdf`/`.docx` in `Resumes\` (same scoping as `delete_document`) so it can be read/analyzed in conversation. Read-only; returns text + metadata (type, pages, words, chars). Very long text is capped with an explicit `truncated` note — never silently. |
@@ -235,14 +247,12 @@ parameters. `Status` on new leads defaults to **Open**.
 The column-management tools (`add_column` etc.) operate on the **tracker**; the
 discovery sheet is managed through its own row tools.
 
-**Formatting:** the discovery sheet is also written by the daily 11 AM task
-(Python + openpyxl, with bold header / frozen row / auto-filter / clickable
-links). Because SheetJS (used by the MCP tools) doesn't re-serialize that rich
-styling, every MCP discovery write is followed by a best-effort **openpyxl
-reformat pass** (`scripts/format_discovery.py`) that re-applies the standard
-formatting — so MCP edits and the daily task keep the file looking the same.
-Requires Python + `openpyxl`; if absent, the write still succeeds (the tool
-returns `formatted: false`) and the next daily run restores styling.
+**Formatting:** SheetJS (used for the data read/write itself) doesn't
+re-serialize rich cell styling, so every MCP discovery write is followed by a
+best-effort **`exceljs` reformat pass** (`xlsxFormat.ts`) that (re)applies bold
+header / frozen row / auto-filter / wrapped text / clickable Job Link cells.
+Pure JS, nothing external required; if it ever fails for some reason the data
+write still succeeds (the tool returns `formatted: false`).
 
 ### Interview prep (`Interview_Prep_QA.md`)
 
@@ -280,9 +290,8 @@ The recommended way to produce a resume — especially from **Claude Desktop**,
 which can't write to arbitrary host paths. The model never emits the binary;
 it emits *tailored text*, and the server renders the PDF host-side. The server's
 MCP `instructions` tell connected clients to use this tool for resumes rather
-than hand-rolling a python-docx/LibreOffice script or moving bytes through
-base64, so it's the single resume path (`scripts/gen_resume.py` is the one
-generator).
+than hand-rolling their own resume-generation script or moving bytes through
+base64, so it's the single resume path (`resumeDocx.ts` is the one generator).
 
 ```jsonc
 generate_resume {
@@ -302,9 +311,10 @@ generate_resume {
   only supplies the `summary` and `key_qualifications` for this `company` +
   `position`. Edit your real facts in `resume_master.json` (a sibling of the
   tracker; override with `JOB_RESUME_MASTER_FILE`).
-- **Rendering** merges master + tailoring → `.docx` via `scripts/gen_resume.py`
-  (python-docx, the measured spec: Liberation Serif, 20 pt name, ruled 11 pt
-  headings, 0.63" margins, US Letter) → PDF via LibreOffice. ~15 s per resume.
+- **Rendering** merges master + tailoring → `.docx` via `resumeDocx.ts` (the
+  `docx` package, in-process; the measured spec: Liberation Serif, 20 pt name,
+  ruled 11 pt headings, 0.63" margins, US Letter) → PDF via LibreOffice or Word,
+  whichever is installed. ~15 s per resume.
 - **Output** lands in `Resumes\` (e.g. `Dale-Magrath-Resume-Acme-Corp-Engineering-Manager.pdf`),
   ready for `print_document`. No base64, no download-then-move.
 - **Wired to tracking.** The result carries a `nextStep` with the exact follow-up

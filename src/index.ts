@@ -17,10 +17,12 @@
  *    directly (TZ-free integer math) and write new dates with the same format.
  *  - Every write first makes a rotating timestamped backup (in a .backups folder).
  *
- * Structure: shared modules (config / errors / dates / workbook engine) plus four
- * tool modules (trackerTools, discoveryTools, interviewPrep, documents), each of
- * which exports register(server) to attach its tools to the shared instance
- * created here.
+ * Structure: shared modules (config / errors / dates / workbook engine /
+ * matching) plus one file per domain (trackerTools, discoveryTools,
+ * interviewPrep, documents, gmailTools, sweepTools + sweepEngine,
+ * discoverySync, searchCriteria, initTools), each exporting register(server)
+ * to attach its tools to the shared instance created here. No Python or
+ * other external interpreter is required by anything in this list.
  */
 
 import * as fs from "node:fs";
@@ -39,7 +41,7 @@ import { register as registerDiscovery } from "./discoveryTools.js";
 import { register as registerGmail } from "./gmailTools.js";
 import { register as registerSweep } from "./sweepTools.js";
 import { register as registerDiscoverySync } from "./discoverySync.js";
-import { register as registerCriteria } from "./criteriaTools.js";
+import { register as registerSearchCriteria } from "./searchCriteria.js";
 import { register as registerInit } from "./initTools.js";
 
 const server = new McpServer(
@@ -55,8 +57,8 @@ const server = new McpServer(
       "tool. It renders a correctly-formatted 2-page PDF host-side from the stable " +
       "facts in resume_master.json plus the per-posting `summary` and " +
       "`key_qualifications` you supply, saves it into Resumes\\, and returns a " +
-      "`nextStep` for tracking it. Do NOT write your own python-docx/LibreOffice " +
-      "script for resumes, and do NOT move documents through base64. For a file " +
+      "`nextStep` for tracking it. Do NOT write your own resume-generation " +
+      "script, and do NOT move documents through base64. For a file " +
       "that already exists on disk, use `save_document` with `source_path` (never " +
       "`content_base64` for anything non-trivial). After generating, offer the " +
       "returned `nextStep` (add_job / promote_to_tracker / update_job).\n\n" +
@@ -67,23 +69,27 @@ const server = new McpServer(
       "to/subject/body. All four require Gmail to be authorized first (see " +
       "GMAIL_SETUP.md / npm run gmail:auth); until then they return a clear " +
       "error telling the user what to run.\n\n" +
-      "SWEEP: run_job_sweep runs the daily-job-search-top5 board scanner and " +
-      "returns only new (not already known) candidates, ~60-90s. It filters " +
-      "mechanically — YOUR judgment is still required for domain fit, comp " +
+      "SWEEP: run_job_sweep runs the board scanner in-process (no Python/" +
+      "subprocess dependency) and returns only new (not already known) " +
+      "candidates, ~60-90s. It filters mechanically against the saved search " +
+      "criteria — YOUR judgment is still required for domain fit, comp " +
       "confirmation, and hybrid-office location before calling discovery_add.\n\n" +
-      "DAILY ROUTINE WITHOUT A SHELL: get_job_search_instructions + " +
-      "run_job_sweep + discovery_sync together reproduce the scheduled " +
-      "daily-job-search-top5 task, for a client with no Bash/script access. " +
-      "Call get_job_search_instructions first — it has the standing search " +
-      "criteria (location, comp floor, role level, domain fit) that decide " +
-      "which sweep candidates actually qualify; skipping it means guessing " +
-      "criteria instead of using Dale's real ones. Then run_job_sweep to " +
-      "find candidates, judge them against those criteria, and call " +
-      "discovery_sync once with the ones that qualify (or an empty array to " +
-      "run housekeeping alone) — it drops acted rows, flags stale ones, and " +
-      "appends the rest with the same dedupe rules, in one call. Prefer it " +
-      "over repeated discovery_add calls when processing a sweep's results, " +
-      "since only discovery_sync also does the housekeeping pass.",
+      "DAILY ROUTINE: get_search_criteria + run_job_sweep + discovery_sync " +
+      "together are the whole routine, on any client (no Bash/script access " +
+      "needed, no scheduler needed — just call them in order). Call " +
+      "get_search_criteria first — it holds the standing search criteria " +
+      "(job titles, work style, city/country, minimum salary, plus free-text " +
+      "notes) that decide which sweep candidates actually qualify. On a fresh " +
+      "install nothing is saved yet: get_search_criteria's result says so and " +
+      "lists exactly what to ask the user — collect those answers and call " +
+      "update_search_criteria before sweeping, rather than guessing or " +
+      "inventing defaults. Then run_job_sweep to find candidates, judge them " +
+      "against those criteria, and call discovery_sync once with the ones " +
+      "that qualify (or an empty array to run housekeeping alone) — it drops " +
+      "acted rows, flags stale ones, and appends the rest with the same " +
+      "dedupe rules, in one call. Prefer it over repeated discovery_add " +
+      "calls when processing a sweep's results, since only discovery_sync " +
+      "also does the housekeeping pass.",
   }
 );
 
@@ -95,7 +101,7 @@ registerDocuments(server);
 registerGmail(server);
 registerSweep(server);
 registerDiscoverySync(server);
-registerCriteria(server);
+registerSearchCriteria(server);
 registerInit(server);
 
 /* ------------------------------------------------------------------ */
