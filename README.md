@@ -31,6 +31,18 @@ scans for updates on tracked roles, and drafts/sends replies — see *Gmail inte
 - **Printing:** silent PDF printing — [`pdf-to-printer`](https://www.npmjs.com/package/pdf-to-printer) (bundles SumatraPDF) on Windows, CUPS's `lp` on macOS/Linux; `.docx` is converted to PDF first using LibreOffice (any OS) or Microsoft Word (Windows only) if installed (optional — see *Safety & behavior notes*)
 - **Client:** Claude Desktop or Claude Code (see config below)
 
+## Prerequisites
+
+- **[Node.js](https://nodejs.org/) 18 or later** — required. Download the LTS
+  installer for your OS from nodejs.org and run it; verify with `node --version`.
+- **[LibreOffice](https://www.libreoffice.org/download/download-libreoffice/)**
+  — optional. Only needed if you want `generate_resume` to also produce a
+  `.pdf` (it always produces the `.docx` regardless). Works on Windows, macOS,
+  and Linux. On Windows only, Microsoft Word (if already installed) works as an
+  alternative — nothing extra to download for that path.
+- **Nothing else.** No Python, no other interpreter, no compiler — every other
+  dependency is pure JavaScript and installed by `npm install` below.
+
 ## Build
 
 ```bash
@@ -46,18 +58,21 @@ install; macOS/Linux print through CUPS's `lp` instead, no npm package needed),
 Python. The one optional *external* dependency is **LibreOffice** (any OS) or
 **Microsoft Word** (Windows only), used only to convert a generated resume's
 `.docx` to `.pdf`; if none is installed, `generate_resume` still produces the
-`.docx` and says so. The optional
-Gmail tools need a one-time `npm run gmail:auth` (see *Gmail integration*).
+`.docx` and says so. The optional Gmail tools need a one-time
+`npm run gmail:auth` (see *Gmail integration*).
 
 ## Configure Claude Desktop
 
-Open Claude Desktop's config file (Windows):
+Open Claude Desktop's config file:
 
 ```
-%APPDATA%\Claude\claude_desktop_config.json
+Windows:  %APPDATA%\Claude\claude_desktop_config.json
+macOS:    ~/Library/Application Support/Claude/claude_desktop_config.json
 ```
 
-Add a `job-tracker` server entry (create the file / `mcpServers` object if needed):
+Add a `job-tracker` server entry (create the file / `mcpServers` object if needed).
+
+Windows:
 
 ```json
 {
@@ -75,6 +90,30 @@ Add a `job-tracker` server entry (create the file / `mcpServers` object if neede
   }
 }
 ```
+
+macOS (same shape, forward-slash paths):
+
+```json
+{
+  "mcpServers": {
+    "job-tracker": {
+      "command": "node",
+      "args": ["/Users/developer/mcp-job-tracker/dist/index.js"],
+      "env": {
+        "JOB_TRACKER_FILE": "/Users/developer/Documents/Job_Tracking.xlsx",
+        "JOB_DISCOVERY_FILE": "/Users/developer/Documents/Job_Search_Discovery.xlsx",
+        "JOB_INTERVIEW_PREP_FILE": "/Users/developer/Documents/Interview_Prep_QA.md",
+        "JOB_RESUMES_DIR": "/Users/developer/Documents/Resumes"
+      }
+    }
+  }
+}
+```
+
+`node` above assumes it's on PATH; if Claude Desktop can't find it, replace
+`"command": "node"` with the absolute path from `which node` (macOS) / `where
+node` (Windows). `setup.mjs` (below) writes this file for you automatically,
+on either OS, so hand-editing it is only needed if you'd rather not use it.
 
 Restart Claude Desktop. You should see the `job-tracker` tools appear. If
 `JOB_TRACKER_FILE` is omitted, the server defaults to
@@ -94,8 +133,8 @@ new machine:
    start with no existing spreadsheet, skip this step and call the
    `init_job_tracker_files` tool once the server is running; it creates the
    folder and both blank, formatted workbooks for you.
-3. Make sure Node.js 18+ is installed (`node --version`). Nothing else — no
-   Python, no other interpreter — is required for the server itself.
+3. Make sure [Node.js](https://nodejs.org/) 18+ is installed (`node --version`)
+   — see *Prerequisites* above; nothing else is required for the server itself.
 4. Run the installer, pointing it at your spreadsheet:
 
    ```bash
