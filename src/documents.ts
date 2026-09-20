@@ -245,6 +245,40 @@ async function convertDocxToPdf(docxPath: string): Promise<string> {
   return pdfPath;
 }
 
+/** Best-effort, side-effect-free check for a docx→PDF converter (LibreOffice
+ *  or, on Windows, Word) — used by generate_resume's format auto-fallback and
+ *  by check_setup, so a fresh install can see this gap without hitting a
+ *  hard failure or running a real conversion just to find out. */
+export async function detectPdfConverter(): Promise<
+  { available: true; via: "libreoffice" | "word" } | { available: false }
+> {
+  const soffice = findSoffice();
+  try {
+    await execFileAsync(soffice, ["--version"], { windowsHide: true, timeout: 5000 });
+    return { available: true, via: "libreoffice" };
+  } catch {
+    /* not found or not runnable — fall through */
+  }
+  if (isWindows()) {
+    try {
+      const { stdout } = await execFileAsync(
+        "powershell.exe",
+        [
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          "Test-Path 'HKLM:\\SOFTWARE\\Classes\\Word.Application'",
+        ],
+        { windowsHide: true, timeout: 5000 }
+      );
+      if (stdout.trim().toLowerCase() === "true") return { available: true, via: "word" };
+    } catch {
+      /* ignore — treated as unavailable */
+    }
+  }
+  return { available: false };
+}
+
 /** Send a PDF to a printer, silently. Windows uses pdf-to-printer (bundles
  *  SumatraPDF); macOS/Linux use CUPS's `lp`, present by default on macOS and
  *  on any Linux with CUPS installed. `lp`/`lpr` are non-interactive already,
@@ -881,9 +915,11 @@ export function register(server: McpServer): void {
         "resume_master.json; YOU supply only the per-posting tailoring: a rewritten " +
         "`summary` and the `key_qualifications` bullets aligning the candidate to " +
         "this specific `company` + `position`. The server renders the master + your " +
-        "tailoring into a formatted PDF (docx built in-process, converted via " +
-          "LibreOffice or Microsoft Word if installed) matching the " +
-        "existing resumes. Do NOT invent employers, dates, or degrees — those are " +
+        "tailoring into a formatted resume (docx built in-process; converted to " +
+          "PDF via LibreOffice or Microsoft Word when one is installed). If " +
+          "neither is found and `format` wasn't explicitly set, it falls back " +
+          "to .docx and says so in the result rather than failing. Do NOT " +
+          "invent employers, dates, or degrees — those are " +
         "fixed in the master. Returns the saved path and size, plus a `nextStep` " +
         "with a suggested follow-up call (add_job / promote_to_tracker / " +
         "update_job) — offer it to the user so tailoring, saving, and tracking " +
@@ -926,7 +962,12 @@ export function register(server: McpServer): void {
         format: z
           .enum(["pdf", "docx"])
           .optional()
-          .describe("Output format (default pdf)."),
+          .describe(
+            "Output format (default pdf). If left unset and no PDF converter " +
+              "is found, silently falls back to docx — set this to \"docx\" " +
+              "explicitly to skip that fallback message, or to \"pdf\" to " +
+              "force a hard error instead of falling back."
+          ),
         filename: z
           .string()
           .optional()
@@ -965,7 +1006,7 @@ export function register(server: McpServer): void {
 
         const company = args.company.trim();
         const position = args.position.trim();
-        const format = args.format ?? "pdf";
+        const requestedFormat = args.format;
         const includeProjects = args.include_projects !== false;
 
         // Merge master facts with the caller's per-posting tailoring.
@@ -985,30 +1026,53 @@ export function register(server: McpServer): void {
           honors: args.include_honors ? master.honors ?? [] : [],
         };
 
-        // Resolve the output file name.
-        let filename = args.filename?.trim();
-        if (!filename) {
-          filename = `Dale-Magrath-Resume-${safeFilePart(company)}-${safeFilePart(
-            position
-          )}.${format}`;
-        }
-        if (!filename.toLowerCase().endsWith("." + format)) {
-          filename += "." + format;
-        }
-        if (filename !== path.basename(filename) || filename.includes("..")) {
-          throw new UserFacingError(
-            `"${filename}" must be a plain file name — no folders or "..".`
-          );
-        }
+        const filenameArg = args.filename?.trim();
 
         // Render in an isolated temp dir, then copy the result into Resumes.
         const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "genresume-"));
         let produced: string;
+        let format: "pdf" | "docx" = requestedFormat ?? "pdf";
+        let formatNote: string | undefined;
         try {
           const docxPath = path.join(tmp, "resume.docx");
           const docxBuffer = await buildResumeDocx(spec as ResumeSpec);
           fs.writeFileSync(docxPath, docxBuffer);
-          produced = format === "pdf" ? await convertDocxToPdf(docxPath) : docxPath;
+
+          if (format === "pdf") {
+            try {
+              produced = await convertDocxToPdf(docxPath);
+            } catch (err) {
+              // No converter found. If the caller explicitly asked for a PDF,
+              // surface the real error; otherwise fall back to the .docx
+              // already rendered above rather than failing outright — a
+              // fresh install with neither LibreOffice nor Word should still
+              // get a usable resume out of the default call.
+              if (requestedFormat === "pdf") throw err;
+              format = "docx";
+              produced = docxPath;
+              formatNote =
+                "No PDF converter (LibreOffice or Microsoft Word) was found, " +
+                'so this was saved as .docx instead. Install one of those for ' +
+                'PDF output, or pass format: "docx" to skip this message.';
+            }
+          } else {
+            produced = docxPath;
+          }
+
+          // Resolve the output file name now that the actual format is known.
+          let filename = filenameArg;
+          if (!filename) {
+            filename = `Dale-Magrath-Resume-${safeFilePart(company)}-${safeFilePart(
+              position
+            )}.${format}`;
+          } else {
+            filename = filename.replace(/\.(pdf|docx)$/i, "") + "." + format;
+          }
+          if (filename !== path.basename(filename) || filename.includes("..")) {
+            throw new UserFacingError(
+              `"${filename}" must be a plain file name — no folders or "..".`
+            );
+          }
 
           const head = Buffer.alloc(8);
           const fd = fs.openSync(produced, "r");
@@ -1044,6 +1108,7 @@ export function register(server: McpServer): void {
             path: target,
             bytes,
             format,
+            ...(formatNote ? { note: formatNote } : {}),
             company,
             position,
             overwrote: exists,

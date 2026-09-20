@@ -44,6 +44,7 @@ import { register as registerBroadSearch } from "./broadSearchTool.js";
 import { register as registerDiscoverySync } from "./discoverySync.js";
 import { register as registerSearchCriteria } from "./searchCriteria.js";
 import { register as registerInit } from "./initTools.js";
+import { register as registerSetup } from "./setupTools.js";
 
 const server = new McpServer(
   {
@@ -54,9 +55,17 @@ const server = new McpServer(
     instructions:
       "This server manages a local job search: a tracker (Job_Tracking.xlsx), a " +
       "discovery pipeline, interview prep, and resume documents (Resumes\\).\n\n" +
+      "SETUP: on an unfamiliar or freshly-installed machine, call check_setup " +
+      "first — it's read-only and reports in one call which files/folders " +
+      "exist, whether search criteria and the resume master are set up, " +
+      "whether Gmail is authorized, and whether a PDF converter is available, " +
+      "with a `nextSteps` list telling you exactly what to do about anything " +
+      "missing. Cheaper than discovering the same gaps one tool call at a " +
+      "time.\n\n" +
       "RESUMES: To create or tailor a resume, ALWAYS use the `generate_resume` " +
-      "tool. It renders a correctly-formatted 2-page PDF host-side from the stable " +
-      "facts in resume_master.json plus the per-posting `summary` and " +
+      "tool. It renders a correctly-formatted 2-page resume host-side (PDF when " +
+      "LibreOffice or Word is installed, else .docx with a clear note) from the " +
+      "stable facts in resume_master.json plus the per-posting `summary` and " +
       "`key_qualifications` you supply, saves it into Resumes\\, and returns a " +
       "`nextStep` for tracking it. Do NOT write your own resume-generation " +
       "script, and do NOT move documents through base64. For a file " +
@@ -133,6 +142,7 @@ registerBroadSearch(server);
 registerDiscoverySync(server);
 registerSearchCriteria(server);
 registerInit(server);
+registerSetup(server);
 
 /* ------------------------------------------------------------------ */
 /* Boot                                                               */

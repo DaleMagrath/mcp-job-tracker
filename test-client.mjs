@@ -218,6 +218,9 @@ async function main() {
     "get_resume_master_field", "update_resume_master_field", "list_resume_master_structure",
     "search_gmail_for_job", "read_gmail_message", "scan_job_updates",
     "draft_gmail_reply", "send_gmail_email",
+    "get_search_criteria", "update_search_criteria",
+    "run_job_sweep", "get_broad_search_queries", "discovery_sync",
+    "init_job_tracker_files", "create_resume_master", "check_setup",
   ];
   for (const t of expected) check(`registered: ${t}`, tools.includes(t));
 
@@ -350,21 +353,30 @@ async function main() {
   r = await call("print_document", { filename: resumeName, printer_name: "No Such Printer 9000" });
   check("print unknown printer refused + lists", r.err && /available printers/i.test(r.j.message || ""));
 
-  console.log("\n# generate_resume (dependency-tolerant)");
-  // Needs python-docx + LibreOffice/Word. On a host with them, assert a real
-  // tailored PDF lands in Resumes; without them, assert a graceful dep error
-  // (not a crash). Either outcome passes so the suite is portable.
+  console.log("\n# generate_resume (auto-fallback to docx when no PDF converter)");
+  // Default format is "pdf", but the tool must never hard-fail just because
+  // no converter is installed: it should transparently fall back to .docx
+  // and say so. Assert success either way, then check the format actually
+  // produced matches what landed on disk.
   r = await call("generate_resume", {
     company: "Hooli",
     position: "Engineering Manager",
     summary: "Tailored summary for the target role.",
     key_qualifications: ["Relevant point one.", "Relevant point two."],
   });
+  check("generate_resume succeeds regardless of PDF converter availability", !r.err, r.text);
   if (!r.err) {
-    const f = path.join(resumesDir, "Dale-Magrath-Resume-Hooli-Engineering-Manager.pdf");
-    const okFile = fs.existsSync(f) && fs.readFileSync(f).subarray(0, 5).toString("latin1") === "%PDF-";
-    check("generate_resume produced a valid PDF (deps present)", okFile, r.j.path);
+    const ext = r.j.format === "docx" ? "docx" : "pdf";
+    const f = path.join(resumesDir, `Dale-Magrath-Resume-Hooli-Engineering-Manager.${ext}`);
+    const okFile =
+      fs.existsSync(f) &&
+      (ext === "docx" || fs.readFileSync(f).subarray(0, 5).toString("latin1") === "%PDF-");
+    check(`generate_resume produced a valid .${ext} (format=${r.j.format})`, okFile, r.j.path);
     check("generate_resume echoes company/position", r.j.company === "Hooli" && r.j.position === "Engineering Manager");
+    check(
+      "generate_resume explains the fallback when a PDF converter was unavailable",
+      r.j.format === "pdf" ? r.j.note === undefined : typeof r.j.note === "string" && /docx/i.test(r.j.note)
+    );
     // Hooli is neither tracked nor a lead -> suggest add_job.
     check("nextStep suggests add_job for a new company", r.j.nextStep?.status === "new" && r.j.nextStep?.suggestedCall?.tool === "add_job");
     // Amazon is already in the tracker -> suggest update_job.
@@ -374,14 +386,11 @@ async function main() {
     await call("discovery_add", { company: "Contoso", position: "Eng Manager" });
     const rs = await call("generate_resume", { company: "Contoso", position: "Eng Manager", summary: "s", key_qualifications: ["k"], overwrite: true });
     check("nextStep suggests promote_to_tracker for a lead", rs.j.nextStep?.status === "in_discovery" && rs.j.nextStep?.suggestedCall?.tool === "promote_to_tracker");
-  } else {
-    check(
-      "generate_resume fails gracefully without deps",
-      /python|libreoffice|word|docx/i.test(r.j.message || ""),
-      r.j.message
-    );
   }
-  // Missing key_qualifications is a schema error regardless of deps.
+  // Explicitly requesting docx must always succeed, with no conversion attempt or note.
+  const rDocx = await call("generate_resume", { company: "Wonka", position: "COO", summary: "s", key_qualifications: ["k"], format: "docx" });
+  check("generate_resume with format:docx succeeds and skips conversion", !rDocx.err && rDocx.j.format === "docx" && rDocx.j.note === undefined, rDocx.text);
+  // Missing key_qualifications is a schema error regardless of format/deps.
   r = await call("generate_resume", { company: "X", position: "Y", summary: "s" });
   check("generate_resume requires key_qualifications", r.err);
 
@@ -392,14 +401,19 @@ async function main() {
   check("read_document blocks path traversal", r.err);
   r = await call("read_document", { filename: "notes.txt" });
   check("read_document unsupported type errors + lists types", r.err && /\.pdf|\.docx/i.test(r.j.message || ""));
-  // If a resume was generated above (deps present), it extracts readable text.
+  // Read back whichever format generate_resume actually produced above
+  // (.pdf if a converter was found, .docx if it fell back).
   const genPdf = path.join(resumesDir, "Dale-Magrath-Resume-Hooli-Engineering-Manager.pdf");
-  if (fs.existsSync(genPdf)) {
-    r = await call("read_document", { filename: "Dale-Magrath-Resume-Hooli-Engineering-Manager.pdf" });
-    check("read_document extracts readable PDF text", !r.err && typeof r.j.text === "string" && /Test Candidate/.test(r.j.text));
-    check("read_document reports pages + words", !r.err && r.j.pages >= 1 && r.j.words > 0);
+  const genDocx = path.join(resumesDir, "Dale-Magrath-Resume-Hooli-Engineering-Manager.docx");
+  const genName = fs.existsSync(genPdf) ? "Dale-Magrath-Resume-Hooli-Engineering-Manager.pdf"
+    : fs.existsSync(genDocx) ? "Dale-Magrath-Resume-Hooli-Engineering-Manager.docx"
+    : null;
+  if (genName) {
+    r = await call("read_document", { filename: genName });
+    check("read_document extracts readable text from the generated resume", !r.err && typeof r.j.text === "string" && /Test Candidate/.test(r.j.text));
+    check("read_document reports words", !r.err && r.j.words > 0);
   } else {
-    check("read_document PDF check skipped (deps absent)", true);
+    check("read_document generated-resume check skipped (no file found)", false, "neither .pdf nor .docx was produced above");
   }
 
   console.log("\n# Resume master field tools (scoped to resume_master.json)");
@@ -450,6 +464,78 @@ async function main() {
   // Read-only tools fail gracefully (authorize-first), not with a crash.
   r = await call("search_gmail_for_job", { company: "Acme" });
   check("search_gmail_for_job errors gracefully when unauthorized", r.err && /auth|credential|gmail/i.test(r.j.message || ""));
+
+  console.log("\n# Search criteria (network-free)");
+  r = await call("get_search_criteria", {});
+  check("get_search_criteria fresh install is incomplete", r.j.isComplete === false && Array.isArray(r.j.promptsNeeded) && r.j.promptsNeeded.length > 0);
+  r = await call("get_broad_search_queries", {});
+  check("get_broad_search_queries refuses before criteria set", r.err && /search criteria/i.test(r.j.message || ""));
+  r = await call("run_job_sweep", {});
+  check("run_job_sweep refuses before criteria set (no network hit)", r.err && /search criteria/i.test(r.j.message || ""));
+  r = await call("update_search_criteria", {
+    job_titles: ["Engineering Manager"],
+    work_style: ["remote"],
+    city: "Toronto",
+    country: "Canada",
+    min_salary: 150000,
+    currency: "CAD",
+  });
+  check("update_search_criteria saves and reports complete", !r.err && r.j.isComplete === true);
+  r = await call("get_search_criteria", {});
+  check("get_search_criteria now complete", r.j.isComplete === true && r.j.criteria.jobTitles.includes("Engineering Manager"));
+  r = await call("get_broad_search_queries", {});
+  check("get_broad_search_queries succeeds once criteria complete", !r.err && Array.isArray(r.j.queries) && r.j.queries.length > 0);
+
+  console.log("\n# discovery_sync (housekeeping + append, no network)");
+  r = await call("discovery_sync", { new_rows: [] });
+  check("discovery_sync housekeeping-only ok", !r.err && Array.isArray(r.j.appended) && typeof r.j.total_rows === "number");
+  r = await call("discovery_sync", {
+    new_rows: [{ company: "Netflix", position: "Director", job_link: "https://netflix.example/jobs/9" }],
+  });
+  check(
+    "discovery_sync skips a candidate already in the tracker",
+    !r.err && r.j.appended.length === 0 && r.j.skipped_duplicates.some((s) => /Netflix/.test(s) && /tracker/i.test(s))
+  );
+  r = await call("discovery_sync", {
+    new_rows: [{ company: "Umbrella Corp", position: "VP Engineering", job_link: "https://umbrella.example/jobs/1" }],
+  });
+  check("discovery_sync appends a genuinely new candidate", !r.err && r.j.appended.some((s) => /Umbrella Corp/.test(s)));
+  r = await call("discovery_sync", {
+    new_rows: [{ company: "Umbrella Corp", position: "VP Engineering", job_link: "https://umbrella.example/jobs/1" }],
+  });
+  check("discovery_sync dedupes a repeat of the same candidate", !r.err && r.j.appended.length === 0 && r.j.skipped_duplicates.length === 1);
+
+  console.log("\n# init_job_tracker_files / create_resume_master (idempotent guards)");
+  r = await call("init_job_tracker_files", {});
+  check(
+    "init_job_tracker_files never touches existing tracker/discovery",
+    !r.err && r.j.folderCreated === false && /already existed/i.test(r.j.tracker) && /already existed/i.test(r.j.discovery)
+  );
+  r = await call("create_resume_master", {
+    name: "X", contact: "x@example.com", default_summary: "s",
+    default_key_qualifications: ["k"], experience: [{ org: "O", title: "T", dates: "D", description: "d" }],
+    education: ["E"], skills: ["S"],
+  });
+  check("create_resume_master refuses when one already exists", r.err && /already exists/i.test(r.j.message || ""));
+
+  console.log("\n# check_setup (read-only readiness report)");
+  r = await call("check_setup", {});
+  check("check_setup reports existing files", !r.err && r.j.tracker.exists === true && r.j.discovery.exists === true && r.j.resumeMaster.exists === true);
+  check("check_setup reflects completed search criteria", r.j.searchCriteria.isComplete === true);
+  check("check_setup reports Gmail unauthorized (creds point nowhere)", r.j.gmail.authorized === false);
+  check("check_setup reports a boolean pdfConverter.available regardless of host", typeof r.j.pdfConverter.available === "boolean");
+
+  console.log("\n# Regression: repeated tracker writes must not balloon file size (cellStyles/theme bug)");
+  const sizeBeforeRepeat = fs.statSync(trackerFile).size;
+  for (let i = 0; i < 5; i++) {
+    await call("update_job_status", { company: "Netflix", position: "Director", status: i % 2 === 0 ? "Interviewing" : "Applied" });
+  }
+  const sizeAfterRepeat = fs.statSync(trackerFile).size;
+  check(
+    "5 repeated writes keep tracker file size stable (no theme-doubling regression)",
+    sizeAfterRepeat < sizeBeforeRepeat * 3 && sizeAfterRepeat < 500_000,
+    `before=${sizeBeforeRepeat}B after=${sizeAfterRepeat}B`
+  );
 
   console.log("\n# Backups rotate into .backups folder");
   const bdir = path.join(dir, ".backups");

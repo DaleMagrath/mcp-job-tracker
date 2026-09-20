@@ -157,6 +157,7 @@ new machine:
 | Tool | What it does |
 |------|--------------|
 | `init_job_tracker_files` | Bootstrap a fresh machine/profile: creates the Job Tracking root folder if missing, and creates `Job_Tracking.xlsx` and/or `Job_Search_Discovery.xlsx` from a blank, formatted template (header row only) for whichever is missing. Never touches a file that already exists. |
+| `check_setup` | Read-only readiness report: which files/folders exist, whether search criteria and the resume master are set up, whether Gmail is authorized, and whether a PDF converter (LibreOffice/Word) is available — with a `nextSteps` list for anything missing. Run this first on an unfamiliar machine instead of discovering gaps one tool at a time. |
 
 | Tool | What it does |
 |------|--------------|
@@ -192,6 +193,7 @@ new machine:
 | `get_search_criteria` | Return the saved search criteria (`search_criteria.json`): target job titles, work style (remote/hybrid/onsite), city/country, minimum annual salary, and a free-text `notes` field. On a fresh install nothing is saved yet — the result's `isComplete` is `false` and `promptsNeeded` lists exactly what to ask the user before calling `update_search_criteria`. |
 | `update_search_criteria` | Create or update the saved criteria. Every field is optional — only what you pass changes. Backs up the previous file first. |
 | `run_job_sweep` | Probe ~95 Greenhouse/Ashby/Lever/SmartRecruiters/Workday boards concurrently (in-process, plain HTTP — no external script), filter to engineering-leadership titles whose location plausibly matches the saved criteria, fetch salary/posted-date detail, HTTP-check links, and dedupe against both spreadsheets. Returns only new candidates. Refuses to run until search criteria are complete. Optional `quick: true` skips boards the last run recorded as unreachable. |
+| `get_broad_search_queries` | Returns ready-to-run WebSearch queries (built from the same saved criteria) aimed at companies outside `run_job_sweep`'s fixed board list — that list is a hard ceiling on what the sweep can ever find, so this is a mandatory complement, not a fallback. The calling model runs the queries itself (this server has no web-search access) and verifies hits before treating them as candidates. |
 
 ### Interview-prep tools (`Interview_Prep_QA.md`)
 
@@ -204,7 +206,8 @@ new machine:
 
 | Tool | What it does |
 |------|--------------|
-| `generate_resume` | **Generate a tailored resume PDF (or docx) host-side and save it to `Resumes\` — no base64, works from Claude Desktop.** Stable facts (employers, dates, education, skills) come from `resume_master.json`; the model supplies only the per-posting `summary` + `key_qualifications` bullets for a `company` + `position`. The `.docx` is built in-process (the `docx` package); PDF output converts that via LibreOffice or Word if either is installed. See the workflow below. |
+| `generate_resume` | **Generate a tailored resume PDF (or docx) host-side and save it to `Resumes\` — no base64, works from Claude Desktop.** Stable facts (employers, dates, education, skills) come from `resume_master.json`; the model supplies only the per-posting `summary` + `key_qualifications` bullets for a `company` + `position`. The `.docx` is built in-process (the `docx` package); PDF output converts that via LibreOffice or Word if either is installed — if neither is found and `format` wasn't explicitly set, it falls back to `.docx` and says so (`note` in the result) rather than failing. See the workflow below. |
+| `create_resume_master` | **One-time setup**: creates `resume_master.json` from a user-uploaded resume's real content (name, contact, experience, education, skills, etc.) — never fabricated. Refuses to run if the file already exists, so it only ever fires once; use `update_resume_master_field` after that. |
 | `save_document` | Save a `.docx`/`.pdf` into the `Resumes\` folder (created if missing). Takes **`source_path`** (preferred — an absolute path to a file already on disk, copied instantly) *or* `content_base64` (fallback, small files only — capped at 20 000 chars ≈ 15 KB). Validates the leading bytes match the extension. Refuses to overwrite unless `overwrite: true`, backing the old file up first. Returns the saved path and size. |
 | `print_document` | Silently print a saved file (name in `Resumes\`, or a full path) to the default or a named printer. PDFs print directly; `.docx` is converted to PDF first (cached next to the docx). Lists available printers if a bad name is given. Confirms the job was **sent**, not physically finished. |
 | `read_document` | Extract the plain text of a saved `.pdf`/`.docx` in `Resumes\` (same scoping as `delete_document`) so it can be read/analyzed in conversation. Read-only; returns text + metadata (type, pages, words, chars). Very long text is capped with an explicit `truncated` note — never silently. |
@@ -500,11 +503,16 @@ npm test
 ```
 
 `test-client.mjs` builds the server, then spins it up over stdio against
-**self-contained fixtures in a temp folder** and asserts on every tool (66
-checks across the tracker, discovery, promote, interview-prep ambiguity,
-document, and backup paths). Your real files are never touched — the suite
+**self-contained fixtures in a temp folder** and asserts on every tool (see the
+file for the current count — run `npm test` rather than trusting a hardcoded
+number here) across the tracker, discovery, promote, interview-prep ambiguity,
+document, search-criteria/sweep/discovery-sync, setup, and backup paths. Your
+real files are never touched — the suite
 creates its own throwaway tracker/discovery/prep/Resumes in the OS temp dir and
 deletes them afterward. It exits non-zero if any check fails.
 
 It does **not** send a physical print job — `print_document` is covered only via
-its error paths (missing file, unsupported type, unknown printer).
+its error paths (missing file, unsupported type, unknown printer). Likewise,
+`run_job_sweep` is only covered via its refuses-without-criteria path — it makes
+live outbound calls to ~95 real ATS endpoints, which isn't something the suite
+exercises automatically.
