@@ -518,3 +518,13 @@ its error paths (missing file, unsupported type, unknown printer). Likewise,
 `run_job_sweep` is only covered via its refuses-without-criteria path — it makes
 live outbound calls to ~95 real ATS endpoints, which isn't something the suite
 exercises automatically.
+
+```bash
+npm run coverage
+```
+
+Runs the same suite under [`c8`](https://github.com/bcoverage/c8) and prints a
+per-file statement/branch/function breakdown (plus an HTML report under
+`coverage/`, gitignored). The Gmail and live-sweep gaps above show up here as
+low coverage on `gmailAuth.js`/`gmailTools.js`/`sweepEngine.js` — expected,
+for the same reason they're not covered by `npm test`.

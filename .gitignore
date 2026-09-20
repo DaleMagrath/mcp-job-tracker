@@ -2,6 +2,7 @@ node_modules/
 dist/
 *.bak
 test-copy.xlsx*
+coverage/
 
 # Runtime backup folders created by backupWithRotation() — may contain real
 # personal data from whatever files the server was pointed at. Never commit.

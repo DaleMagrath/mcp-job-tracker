@@ -553,7 +553,18 @@ async function main() {
     fs.existsSync(bdir) && fs.readdirSync(bdir).some((f) => f.startsWith("Job_Tracking.xlsx."))
   );
 
-  proc.kill();
+  // Close stdin rather than force-killing: the server exits cleanly on its
+  // own once stdin ends, which (unlike proc.kill() on Windows, where a forced
+  // TerminateProcess skips exit handlers entirely) lets it flush its
+  // NODE_V8_COVERAGE data — needed for `npm run coverage` to see anything
+  // beyond this file itself. Falls back to a hard kill if it doesn't exit
+  // promptly, so the suite never hangs.
+  proc.stdin.end();
+  await new Promise((resolve) => {
+    proc.once("exit", resolve);
+    setTimeout(resolve, 3000);
+  });
+  if (proc.exitCode === null) proc.kill();
   try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
 
   console.log(`\n${failed === 0 ? "ALL PASSED" : "FAILURES"}: ${passed} passed, ${failed} failed`);
