@@ -504,27 +504,43 @@ and should only be called after you've reviewed the exact to/subject/body.
 npm test
 ```
 
-`test-client.mjs` builds the server, then spins it up over stdio against
-**self-contained fixtures in a temp folder** and asserts on every tool (see the
-file for the current count — run `npm test` rather than trusting a hardcoded
-number here) across the tracker, discovery, promote, interview-prep ambiguity,
-document, search-criteria/sweep/discovery-sync, setup, and backup paths. Your
-real files are never touched — the suite
-creates its own throwaway tracker/discovery/prep/Resumes in the OS temp dir and
-deletes them afterward. It exits non-zero if any check fails.
+`npm test` (via `run-tests.mjs`) runs two suites:
+
+- **`test-client.mjs`** — an integration suite. Builds the server, spins it up
+  over stdio against **self-contained fixtures in a temp folder**, and asserts
+  on every tool (see the file for the current count — run `npm test` rather
+  than trusting a hardcoded number here) across the tracker, discovery,
+  promote, interview-prep ambiguity, document, search-criteria/sweep/
+  discovery-sync, setup, and backup paths. Your real files are never touched —
+  the suite creates its own throwaway tracker/discovery/prep/Resumes in the OS
+  temp dir and deletes them afterward.
+- **`test-unit.mjs`** — plain unit tests, importing `dist/*.js` directly (no
+  server process) for the pure logic that lives right next to the network/
+  OAuth calls above: title/location classification, salary-text mining,
+  per-ATS board-response parsing, Gmail header/MIME/raw-email helpers, and
+  the board-health cache round-trip. This is exactly the logic that would
+  otherwise go completely untested, since it sits inside the same files as
+  the excluded network calls.
+
+Either script exits non-zero if any check fails, and so does `npm test`.
 
 It does **not** send a physical print job — `print_document` is covered only via
 its error paths (missing file, unsupported type, unknown printer). Likewise,
-`run_job_sweep` is only covered via its refuses-without-criteria path — it makes
-live outbound calls to ~95 real ATS endpoints, which isn't something the suite
-exercises automatically.
+`run_job_sweep`/`runSweep()` itself is only covered via its refuses-without-
+criteria path — it makes live outbound calls to ~95 real ATS endpoints, which
+isn't something either suite exercises automatically.
 
 ```bash
 npm run coverage
 ```
 
-Runs the same suite under [`c8`](https://github.com/bcoverage/c8) and prints a
-per-file statement/branch/function breakdown (plus an HTML report under
-`coverage/`, gitignored). The Gmail and live-sweep gaps above show up here as
-low coverage on `gmailAuth.js`/`gmailTools.js`/`sweepEngine.js` — expected,
-for the same reason they're not covered by `npm test`.
+Runs both suites together under [`c8`](https://github.com/bcoverage/c8) and
+prints a per-file statement/branch/function breakdown (plus an HTML report
+under `coverage/`, gitignored). `sweepEngine.ts`/`gmailAuth.ts`/`gmailTools.ts`
+wrap their genuinely network/OAuth-bound functions in `/* c8 ignore */`
+comments — deliberately narrow: only the functions whose entire body is a live
+call are excluded, so pure logic living right next to them (and tested by
+`test-unit.mjs`) still counts. What's left uncovered after that is real,
+visible, and mostly `runSweep()`'s own orchestration plus the Gmail tool
+handlers' post-auth bodies — both need either mocking or real
+credentials/network to close further.

@@ -39,12 +39,12 @@ const CLOSED_STATUSES = new Set([
   "closed - no longer available",
 ]);
 
-function messageLink(id: string): string {
+export function messageLink(id: string): string {
   return `https://mail.google.com/mail/u/0/#all/${id}`;
 }
 
 /** Pull one header's value (case-insensitive) from a Gmail message payload. */
-function header(payload: any, name: string): string | undefined {
+export function header(payload: any, name: string): string | undefined {
   const list: any[] = payload?.headers ?? [];
   return list.find((h) => h.name?.toLowerCase() === name.toLowerCase())?.value;
 }
@@ -85,13 +85,13 @@ async function searchMessages(auth: OAuth2Client, q: string, maxResults: number)
 /* c8 ignore stop */
 
 /** Decode a Gmail API base64url body payload into a UTF-8 string. */
-function decodeBase64Url(data: string): string {
+export function decodeBase64Url(data: string): string {
   const b64 = data.replace(/-/g, "+").replace(/_/g, "/");
   return Buffer.from(b64, "base64").toString("utf8");
 }
 
 /** Strip an HTML email body down to readable plain text (best-effort). */
-function stripHtml(html: string): string {
+export function stripHtml(html: string): string {
   return html
     .replace(/<style[\s\S]*?<\/style>/gi, "")
     .replace(/<script[\s\S]*?<\/script>/gi, "")
@@ -110,7 +110,7 @@ function stripHtml(html: string): string {
 }
 
 /** Walk a MIME payload tree, returning the best text/plain and/or text/html part found. */
-function extractBody(payload: any): { text?: string; html?: string } {
+export function extractBody(payload: any): { text?: string; html?: string } {
   const result: { text?: string; html?: string } = {};
   function walk(part: any): void {
     if (!part) return;
@@ -137,7 +137,7 @@ function extractBody(payload: any): { text?: string; html?: string } {
 }
 
 /** Base64url-encode a raw RFC 2822 message the way the Gmail API expects. */
-function toBase64Url(raw: string): string {
+export function toBase64Url(raw: string): string {
   return Buffer.from(raw, "utf8")
     .toString("base64")
     .replace(/\+/g, "-")
@@ -159,7 +159,7 @@ function toBase64Url(raw: string): string {
  * boundaries — never mid-codepoint — because a split multi-byte sequence would
  * decode to a replacement character.
  */
-function encodeHeaderValue(value: string): string {
+export function encodeHeaderValue(value: string): string {
   if (!/[^\x20-\x7e]/.test(value)) return value;
 
   const MAX_BYTES = 45; // 45 bytes -> 60 base64 chars + "=?UTF-8?B??=" = 72
@@ -181,7 +181,7 @@ function encodeHeaderValue(value: string): string {
     .join("\r\n ");
 }
 
-function buildRawEmail(opts: {
+export function buildRawEmail(opts: {
   to: string;
   cc?: string;
   subject: string;
@@ -225,13 +225,13 @@ async function getLastMessageInThread(auth: OAuth2Client, threadId: string) {
 /* c8 ignore stop */
 
 /** Extract a bare email address out of a "Name <addr@x.com>" From header. */
-function extractEmailAddress(fromHeader: string): string {
+export function extractEmailAddress(fromHeader: string): string {
   const m = /<([^>]+)>/.exec(fromHeader);
   return (m ? m[1] : fromHeader).trim();
 }
 
 /** Simple keyword heuristics over subject+snippet, most-significant first. */
-function guessStatusFromText(text: string): string | undefined {
+export function guessStatusFromText(text: string): string | undefined {
   const t = text.toLowerCase();
   const offerHints = ["pleased to offer", "extend an offer", "job offer", "offer letter"];
   const declineHints = [

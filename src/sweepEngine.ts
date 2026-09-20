@@ -182,7 +182,7 @@ const ENG_SIGNAL =
 const NOT_ENGINEERING =
   /\b(product manager|product marketing|group product|program manager|project manager|account|customer success|customer experience|sales|revenue|renewal|marketing|recruit|talent|people|payroll|compensat|benefits|procurement|financ|fp&a|accounting|legal|counsel|polic|public affairs|communicat|press|brand|support|solutions architect|field engineering|sales engineering|professional services|consultant|partner|channel|alliance|community|content|design|\bux\b|user research|analyst|analytics manager|information technology|it operations|governance|risk|audit|compliance|trust & safety|business development|corporate strategy|operations manager|office manager|facilities|technical program|technical account|implementation|onboarding|enablement|training|education|technical learning|learning &|learning and development|business systems|corporate systems|internal systems|\babm\b|\bhr\b|\btax\b)/i;
 
-function isEngLeadership(title: string): boolean {
+export function isEngLeadership(title: string): boolean {
   if (NOT_ENGINEERING.test(title)) return false;
   if (STRONG.test(title)) return true;
   return LEVEL.test(title) && ENG_SIGNAL.test(title);
@@ -192,7 +192,7 @@ function isEngLeadership(title: string): boolean {
  *  target titles verbatim — widens the net past the built-in classifier for
  *  a title it wouldn't otherwise recognize (e.g. a niche "Head of Platform"
  *  variant), without weakening the classifier itself. */
-function matchesOwnTitles(title: string, jobTitles: string[]): boolean {
+export function matchesOwnTitles(title: string, jobTitles: string[]): boolean {
   const t = title.toLowerCase();
   return jobTitles.some((jt) => jt.trim() && t.includes(jt.trim().toLowerCase()));
 }
@@ -222,7 +222,7 @@ interface LocationMatchers {
  *  matching the country/city name itself plus the same broad-remote-scope
  *  "maybe" bucket — looser, but there's no tuned exclude-list to pair with
  *  an arbitrary country, so nothing is hard-excluded in that case. */
-function buildLocationMatchers(criteria: SearchCriteria): LocationMatchers {
+export function buildLocationMatchers(criteria: SearchCriteria): LocationMatchers {
   const country = (criteria.country || "Canada").trim();
   if (/^can(ada)?$/i.test(country)) {
     return { ok: CANADA_OK, maybe: CANADA_MAYBE, not: NOT_CANADA };
@@ -234,7 +234,7 @@ function buildLocationMatchers(criteria: SearchCriteria): LocationMatchers {
   return { ok, maybe: CANADA_MAYBE, not: /(?!)/ };
 }
 
-function locationBucket(locText: string, m: LocationMatchers): "canada" | "maybe" | "no" | "unknown" {
+export function locationBucket(locText: string, m: LocationMatchers): "canada" | "maybe" | "no" | "unknown" {
   if (!locText) return "unknown";
   if (m.ok.test(locText)) return "canada"; // "qualifies", regardless of country
   if (m.maybe.test(locText) && !m.not.test(locText)) return "maybe";
@@ -248,14 +248,14 @@ function locationBucket(locText: string, m: LocationMatchers): "canada" | "maybe
 
 const MONEY = /(?:CA?\$|\$|CAD|USD)\s?(\d{2,3}(?:,\d{3})+|\d{6})/g;
 
-function moneyList(text: string): number[] {
+export function moneyList(text: string): number[] {
   if (!text) return [];
   const out: number[] = [];
   for (const m of text.matchAll(MONEY)) out.push(parseInt(m[1].replace(/,/g, ""), 10));
   return out;
 }
 
-function currencyOf(s: string): string {
+export function currencyOf(s: string): string {
   if (/\bCA\$|\bCAD\b|\bcanad/i.test(s)) return "CAD";
   if (/\bUSD\b|\bUS\$|\bu\.?s\.?\b/i.test(s)) return "USD";
   return "";
@@ -281,7 +281,7 @@ interface AshbyComp {
  * exist, so return the verbatim sentences around each figure and derive the
  * range from the single best snippet (Canada-specific if there is one).
  */
-function compSnippets(text: string | undefined, ashbyComp: AshbyComp | null | undefined): CompResult {
+export function compSnippets(text: string | undefined, ashbyComp: AshbyComp | null | undefined): CompResult {
   const snips: string[] = [];
   if (ashbyComp?.compensationTiers) {
     for (const tier of ashbyComp.compensationTiers) {
@@ -323,7 +323,7 @@ const NAMED_ENTITIES: Record<string, string> = {
   ldquo: "“", trade: "™", bull: "•", middot: "·",
 };
 
-function decodeHtmlEntities(s: string): string {
+export function decodeHtmlEntities(s: string): string {
   return s.replace(/&(#x?[0-9a-fA-F]+|[a-zA-Z]+);/g, (whole, ent: string) => {
     if (ent[0] === "#") {
       const isHex = ent[1] === "x" || ent[1] === "X";
@@ -334,7 +334,7 @@ function decodeHtmlEntities(s: string): string {
   });
 }
 
-function stripHtml(s: string): string {
+export function stripHtml(s: string): string {
   let out = s;
   for (let i = 0; i < 2; i++) {
     out = decodeHtmlEntities(out);
@@ -398,12 +398,12 @@ const BOARD_URL: Partial<Record<Ats, string>> = {
 const WD_LIMIT = 20; // Workday rejects limit > 20 with HTTP 400
 const WD_MAX_PAGES = 15; // 300 postings/board; well past what the title filter needs
 
-function wdParts(token: string): { tenant: string; host: string; site: string } {
+export function wdParts(token: string): { tenant: string; host: string; site: string } {
   const [tenant, host, site] = token.split(":");
   return { tenant, host, site };
 }
 
-function wdCxs(token: string): string {
+export function wdCxs(token: string): string {
   const { tenant, host, site } = wdParts(token);
   return `https://${tenant}.${host}.myworkdayjobs.com/wday/cxs/${tenant}/${site}`;
 }
@@ -472,7 +472,7 @@ export interface Posting {
   needsDetail: boolean;
 }
 
-function parseBoard(company: string, ats: Ats, token: string, body: string): Posting[] {
+export function parseBoard(company: string, ats: Ats, token: string, body: string): Posting[] {
   let data: any;
   try {
     data = JSON.parse(body);
@@ -625,7 +625,7 @@ async function checkLive(p: Posting & { liveStatus?: number; live?: LiveStatus }
 /* Concurrency helper                                                  */
 /* ------------------------------------------------------------------ */
 
-async function mapLimit<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
+export async function mapLimit<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
   let idx = 0;
   async function worker(): Promise<void> {
     for (;;) {
@@ -648,7 +648,7 @@ interface Existing {
   trackerCompanyRows: Map<string, string[]>;
 }
 
-function readExisting(): Existing {
+export function readExisting(): Existing {
   const discoveryPairs = new Set<string>();
   const discoveryLinks = new Set<string>();
   const trackerPairs = new Set<string>();
@@ -693,7 +693,7 @@ interface BoardHealthEntry {
 }
 type BoardHealth = Record<string, BoardHealthEntry>;
 
-function readHealth(): BoardHealth {
+export function readHealth(): BoardHealth {
   try {
     return JSON.parse(fs.readFileSync(SWEEP_HEALTH_FILE, "utf-8"));
   } catch {
@@ -701,7 +701,7 @@ function readHealth(): BoardHealth {
   }
 }
 
-function writeHealth(health: BoardHealth): void {
+export function writeHealth(health: BoardHealth): void {
   try {
     fs.writeFileSync(SWEEP_HEALTH_FILE, JSON.stringify(health, null, 1));
   } catch {
@@ -752,13 +752,13 @@ export interface SweepOptions {
   persist?: boolean;
 }
 
-function todayISO(): string {
+export function todayISO(): string {
   const d = new Date();
   const p = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
-function daysBetween(isoDate: string, today: string): number | null {
+export function daysBetween(isoDate: string, today: string): number | null {
   const a = Date.parse(isoDate + "T00:00:00Z");
   const b = Date.parse(today + "T00:00:00Z");
   if (Number.isNaN(a) || Number.isNaN(b)) return null;

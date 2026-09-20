@@ -112,7 +112,7 @@ const GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1/users/me";
 
 /** Build a URL with query params, repeating array values (Gmail's convention
  *  for e.g. metadataHeaders=From&metadataHeaders=Subject). */
-function buildUrl(path: string, params: Record<string, unknown> | undefined): string {
+export function buildUrl(path: string, params: Record<string, unknown> | undefined): string {
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(params ?? {})) {
     if (v === undefined || v === null) continue;
@@ -127,7 +127,7 @@ function buildUrl(path: string, params: Record<string, unknown> | undefined): st
 }
 
 /** Wrap Gmail REST errors (which arrive as thrown GaxiosError) into a UserFacingError. */
-function wrapGmailError(err: any, action: string): never {
+export function wrapGmailError(err: any, action: string): never {
   const status = err?.response?.status ?? err?.code;
   const apiMessage = err?.response?.data?.error?.message;
   if (status === 401 || status === 403) {

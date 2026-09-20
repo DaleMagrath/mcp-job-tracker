@@ -10,9 +10,9 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "test": "node test-client.mjs",
+    "test": "node run-tests.mjs",
     "pretest": "tsc",
-    "coverage": "c8 --reporter=text --reporter=html node test-client.mjs",
+    "coverage": "c8 --reporter=text --reporter=html node run-tests.mjs",
     "precoverage": "tsc",
     "gmail:auth": "node scripts/gmail-authorize.mjs"
   },
