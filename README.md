@@ -1,5 +1,7 @@
 # Job Search Assistant — MCP Server
 
+[![Tests](https://github.com/DaleMagrath/mcp-job-tracker/actions/workflows/test.yml/badge.svg)](https://github.com/DaleMagrath/mcp-job-tracker/actions/workflows/test.yml)
+
 A local [Model Context Protocol](https://modelcontextprotocol.io) server that lets
 Claude read and update your job-search spreadsheets through natural conversation —
 "what's still awaiting a response after 2 weeks?", "add this posting to my

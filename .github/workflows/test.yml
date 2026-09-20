@@ -1,0 +1,28 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        # The server has real OS-specific branches (PDF conversion via
+        # LibreOffice/Word, printing via SumatraPDF vs. CUPS) — run on all
+        # three so a regression in one platform's path doesn't slip through
+        # just because the other two are fine. None of these runners are
+        # expected to have LibreOffice/Word/a real printer installed; the
+        # suite is written to pass either way (see test-client.mjs's
+        # "dependency-tolerant" notes).
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npm test
