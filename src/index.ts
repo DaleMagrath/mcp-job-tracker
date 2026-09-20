@@ -40,6 +40,7 @@ import { register as registerTracker } from "./trackerTools.js";
 import { register as registerDiscovery } from "./discoveryTools.js";
 import { register as registerGmail } from "./gmailTools.js";
 import { register as registerSweep } from "./sweepTools.js";
+import { register as registerBroadSearch } from "./broadSearchTool.js";
 import { register as registerDiscoverySync } from "./discoverySync.js";
 import { register as registerSearchCriteria } from "./searchCriteria.js";
 import { register as registerInit } from "./initTools.js";
@@ -62,6 +63,18 @@ const server = new McpServer(
       "that already exists on disk, use `save_document` with `source_path` (never " +
       "`content_base64` for anything non-trivial). After generating, offer the " +
       "returned `nextStep` (add_job / promote_to_tracker / update_job).\n\n" +
+      "NO RESUME MASTER YET: generate_resume / get_resume_master_field / " +
+      "update_resume_master_field / list_resume_master_structure all error " +
+      "clearly if resume_master.json doesn't exist. On that error (or on a " +
+      "fresh install), ask the user to upload their master resume — the one " +
+      "they'd customize per application — as a PDF or DOCX. Save it (e.g. " +
+      "`save_document` with `source_path`), extract its text (`read_document`), " +
+      "structure the REAL content into resume_master.json's fields (name, " +
+      "contact, default_summary, default_key_qualifications, experience[], " +
+      "education[], skills[], optionally projects[]/certifications[]) — never " +
+      "fabricate facts, ask the user to fill in anything genuinely missing — " +
+      "and save it with `create_resume_master`. That tool refuses to run if " +
+      "resume_master.json already exists, so it only ever fires once.\n\n" +
       "GMAIL: search_gmail_for_job and scan_job_updates are read-only. " +
       "draft_gmail_reply saves a Gmail draft but does not send. " +
       "send_gmail_email SENDS IMMEDIATELY and cannot be undone — only call it " +
@@ -73,23 +86,39 @@ const server = new McpServer(
       "subprocess dependency) and returns only new (not already known) " +
       "candidates, ~60-90s. It filters mechanically against the saved search " +
       "criteria — YOUR judgment is still required for domain fit, comp " +
-      "confirmation, and hybrid-office location before calling discovery_add.\n\n" +
-      "DAILY ROUTINE: get_search_criteria + run_job_sweep + discovery_sync " +
-      "together are the whole routine, on any client (no Bash/script access " +
-      "needed, no scheduler needed — just call them in order). Call " +
-      "get_search_criteria first — it holds the standing search criteria " +
-      "(job titles, work style, city/country, minimum salary, plus free-text " +
-      "notes) that decide which sweep candidates actually qualify. On a fresh " +
-      "install nothing is saved yet: get_search_criteria's result says so and " +
-      "lists exactly what to ask the user — collect those answers and call " +
-      "update_search_criteria before sweeping, rather than guessing or " +
-      "inventing defaults. Then run_job_sweep to find candidates, judge them " +
-      "against those criteria, and call discovery_sync once with the ones " +
-      "that qualify (or an empty array to run housekeeping alone) — it drops " +
-      "acted rows, flags stale ones, and appends the rest with the same " +
-      "dedupe rules, in one call. Prefer it over repeated discovery_add " +
-      "calls when processing a sweep's results, since only discovery_sync " +
-      "also does the housekeeping pass.",
+      "confirmation, and hybrid-office location before calling discovery_add. " +
+      "IMPORTANT LIMITATION: it only probes a fixed list of ~95 known " +
+      "companies' ATS boards — it structurally cannot find a posting at a " +
+      "company that isn't already on that list, no matter how often it " +
+      "runs. That is what get_broad_search_queries is for (see below).\n\n" +
+      "BROAD SEARCH: get_broad_search_queries returns ready-to-run WebSearch " +
+      "queries built from the same saved search criteria, aimed at " +
+      "companies outside run_job_sweep's board list. This server has no " +
+      "web-search access itself, so the calling model must run the queries " +
+      "with its own WebSearch tool and WebFetch anything promising to " +
+      "verify it before treating it as a candidate. This is a MANDATORY " +
+      "part of the daily routine, not a fallback for when run_job_sweep " +
+      "comes up short — skipping it means silently limiting the search to " +
+      "the same ~95 companies forever.\n\n" +
+      "DAILY ROUTINE: get_search_criteria + run_job_sweep + " +
+      "get_broad_search_queries + discovery_sync together are the whole " +
+      "routine, on any client (no Bash/script access needed, no scheduler " +
+      "needed — just call them in order). Call get_search_criteria first — " +
+      "it holds the standing search criteria (job titles, work style, " +
+      "city/country, minimum salary, plus free-text notes) that decide " +
+      "which candidates actually qualify, from either source. On a fresh " +
+      "install nothing is saved yet: get_search_criteria's result says so " +
+      "and lists exactly what to ask the user — collect those answers and " +
+      "call update_search_criteria before sweeping, rather than guessing or " +
+      "inventing defaults. Then run_job_sweep to find candidates from the " +
+      "known-board list, and get_broad_search_queries plus your own " +
+      "WebSearch/WebFetch calls to find candidates beyond it. Judge all of " +
+      "them against the saved criteria, then call discovery_sync once with " +
+      "the ones that qualify (or an empty array to run housekeeping alone) " +
+      "— it drops acted rows, flags stale ones, and appends the rest with " +
+      "the same dedupe rules, in one call. Prefer it over repeated " +
+      "discovery_add calls when processing results, since only " +
+      "discovery_sync also does the housekeeping pass.",
   }
 );
 
@@ -100,6 +129,7 @@ registerInterviewPrep(server);
 registerDocuments(server);
 registerGmail(server);
 registerSweep(server);
+registerBroadSearch(server);
 registerDiscoverySync(server);
 registerSearchCriteria(server);
 registerInit(server);

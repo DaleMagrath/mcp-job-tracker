@@ -62,7 +62,7 @@ export async function formatWorkbookFile(
     }
 
     ws.views = [{ state: "frozen", ySplit: 1 }];
-    ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: colCount } };
+    ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: ws.rowCount, column: colCount } };
 
     const longest = new Array(colCount).fill(0);
     for (let c = 1; c <= colCount; c++) {

@@ -55,7 +55,12 @@ export function register(server: McpServer): void {
         "'unknown' means verify the location from the live posting before " +
         "trusting it. Requires search criteria to be set first (see " +
         "get_search_criteria) — refuses to run on an unset/incomplete " +
-        "criteria file rather than filtering against guessed defaults.",
+        "criteria file rather than filtering against guessed defaults. " +
+        "LIMITATION: only probes a fixed list of ~95 known companies — it " +
+        "structurally cannot find a posting at a company that isn't " +
+        "already on that list. Always pair this with get_broad_search_queries " +
+        "to cover companies outside it; that is a mandatory part of the " +
+        "routine, not an optional extra.",
       inputSchema: {
         quick: z
           .boolean()

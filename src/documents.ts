@@ -332,7 +332,11 @@ function loadResumeMaster(): any {
   if (!fs.existsSync(RESUME_MASTER_FILE)) {
     throw new UserFacingError(
       `No resume master found at:\n  ${RESUME_MASTER_FILE}\n` +
-        `Create it, or set JOB_RESUME_MASTER_FILE.`
+        `Ask the user to upload their master resume (PDF or DOCX) — the one ` +
+        `they'd customize per application — then structure its real content ` +
+        `into resume_master.json's fields and save it with ` +
+        `create_resume_master. Do not fabricate facts. Alternatively set ` +
+        `JOB_RESUME_MASTER_FILE to point at an existing file elsewhere.`
     );
   }
   try {
@@ -942,8 +946,12 @@ export function register(server: McpServer): void {
         if (!fs.existsSync(RESUME_MASTER_FILE)) {
           throw new UserFacingError(
             `No resume master found at:\n  ${RESUME_MASTER_FILE}\n` +
-              `Create it (stable facts: name, contact, experience, education, ` +
-              `skills) or set JOB_RESUME_MASTER_FILE.`
+              `Ask the user to upload their master resume (PDF or DOCX) — the ` +
+              `one they'd customize per application — then structure its real ` +
+              `content (name, contact, experience, education, skills) into ` +
+              `resume_master.json's fields and save it with ` +
+              `create_resume_master. Do not fabricate facts. Alternatively set ` +
+              `JOB_RESUME_MASTER_FILE to point at an existing file elsewhere.`
           );
         }
         let master: any;
@@ -1195,6 +1203,140 @@ export function register(server: McpServer): void {
           scope = args.path;
         }
         return textResult({ path: scope, structure: describeShape(target, 2) });
+      })
+  );
+
+  // S8b. create_resume_master -------------------------------------------
+  server.registerTool(
+    "create_resume_master",
+    {
+      title: "Create resume master from an uploaded resume",
+      description:
+        "ONE-TIME SETUP: creates resume_master.json from scratch. Use this only " +
+        "when get_search_criteria, generate_resume, get_resume_master_field, " +
+        "update_resume_master_field, or list_resume_master_structure reported no " +
+        "resume master found. Refuses to run if resume_master.json already " +
+        "exists — that protects existing data; use update_resume_master_field for " +
+        "an existing file, or delete/rename it by hand first if the user truly " +
+        "wants to start over.\n\n" +
+        "BEFORE calling this: ask the user to upload their master resume — the " +
+        "one they'd customize per application — as a PDF or DOCX. Save it (e.g. " +
+        "via save_document with source_path), extract its text (read_document " +
+        "for a file in the Resumes folder), and structure the real content from " +
+        "that file into the fields below. Do NOT invent or guess employers, " +
+        "dates, titles, or degrees — only use what the uploaded resume actually " +
+        "says, and ask the user to fill in anything genuinely unclear or " +
+        "missing (e.g. a summary paragraph the resume didn't have) rather than " +
+        "fabricating it.",
+      inputSchema: {
+        name: z.string().min(1).describe('Full name, e.g. "Dale Magrath".'),
+        contact: z
+          .string()
+          .min(1)
+          .describe(
+            'Contact line as it should print on the resume, e.g. "email · city, ' +
+              'province/state · linkedin.com/in/handle".'
+          ),
+        default_summary: z
+          .string()
+          .min(1)
+          .describe(
+            "A default summary paragraph, used when generate_resume isn't given " +
+              "a tailored one. Base it on the resume's own summary/objective if it " +
+              "has one."
+          ),
+        default_key_qualifications: z
+          .array(z.string().min(1))
+          .min(1)
+          .describe("Default key-qualification bullets, used the same way as default_summary."),
+        experience: z
+          .array(
+            z.object({
+              org: z.string().min(1).describe('Employer, e.g. "Acme Corp".'),
+              title: z.string().min(1).describe('Job title, e.g. "Engineering Manager".'),
+              dates: z.string().min(1).describe('Date range as printed, e.g. "Mar 2021 - Present".'),
+              description: z.string().min(1).describe("Role description / achievements, as prose or bullet-joined text."),
+            })
+          )
+          .min(1)
+          .describe("Work history, most recent first — one entry per role."),
+        projects: z
+          .array(
+            z.object({
+              name: z.string().min(1),
+              dates: z.string().min(1),
+              description: z.string().min(1),
+            })
+          )
+          .optional()
+          .describe("Optional notable projects section. Omit if the resume has none."),
+        education: z
+          .array(z.string().min(1))
+          .min(1)
+          .describe('Education entries as printed, e.g. "B.Sc. Computer Science, University of Toronto".'),
+        certifications: z
+          .array(z.string().min(1))
+          .optional()
+          .describe("Optional certifications list. Omit if the resume has none."),
+        skills: z
+          .array(z.string().min(1))
+          .min(1)
+          .describe("Flat skills list."),
+      },
+    },
+    async (args) =>
+      guard(() => {
+        if (fs.existsSync(RESUME_MASTER_FILE)) {
+          throw new UserFacingError(
+            `resume_master.json already exists at:\n  ${RESUME_MASTER_FILE}\n` +
+              `Refusing to overwrite it. Use update_resume_master_field to change ` +
+              `an existing field, or list_resume_master_structure / ` +
+              `get_resume_master_field to review what's there first.`
+          );
+        }
+
+        const master = {
+          _note:
+            "Stable resume facts. generate_resume merges the model's per-posting " +
+            "summary and key_qualifications with these facts to render a tailored " +
+            "resume. Edit via update_resume_master_field, not by hand, so backups " +
+            "are kept.",
+          name: args.name.trim(),
+          contact: args.contact.trim(),
+          default_summary: args.default_summary.trim(),
+          default_key_qualifications: args.default_key_qualifications,
+          experience: args.experience,
+          ...(args.projects ? { projects: args.projects } : {}),
+          education: args.education,
+          ...(args.certifications ? { certifications: args.certifications } : {}),
+          skills: args.skills,
+        };
+
+        ensureDir(JOB_ROOT);
+        try {
+          fs.writeFileSync(
+            RESUME_MASTER_FILE,
+            JSON.stringify(master, null, 2) + "\n",
+            "utf8"
+          );
+        } catch (err) {
+          throw wrapFsError(err, "write", RESUME_MASTER_FILE, "document");
+        }
+
+        return textResult({
+          message: `Created resume_master.json at:\n  ${RESUME_MASTER_FILE}`,
+          entries: {
+            experience: args.experience.length,
+            education: args.education.length,
+            skills: args.skills.length,
+            projects: args.projects?.length ?? 0,
+            certifications: args.certifications?.length ?? 0,
+          },
+          nextStep:
+            "You can now call generate_resume to create a tailored resume for a " +
+            "specific posting, or get_resume_master_field / " +
+            "update_resume_master_field to review or correct individual facts.",
+        });
       })
   );
 
