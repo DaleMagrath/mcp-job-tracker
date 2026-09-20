@@ -35,6 +35,11 @@ scans for updates on tracked roles, and drafts/sends replies — see *Gmail inte
 
 ## Prerequisites
 
+> Setting this up on a brand-new Windows 11 machine, with nothing installed
+> yet? [WINDOWS_SETUP.md](WINDOWS_SETUP.md) is a complete beginner-friendly
+> walkthrough — Node, the project files, Claude Desktop, and troubleshooting,
+> in order. The steps below are the terse reference version.
+
 - **[Node.js](https://nodejs.org/) 18 or later** — required. Download the LTS
   installer for your OS from nodejs.org and run it; verify with `node --version`.
 - **[LibreOffice](https://www.libreoffice.org/download/download-libreoffice/)**
