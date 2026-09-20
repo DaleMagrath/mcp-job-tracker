@@ -49,6 +49,10 @@ function header(payload: any, name: string): string | undefined {
   return list.find((h) => h.name?.toLowerCase() === name.toLowerCase())?.value;
 }
 
+/* c8 ignore start -- both functions below make a real Gmail API call via
+ * gmailGet(); structurally unreachable without real credentials (see
+ * gmailAuth.ts's matching note). The pure header()/messageLink() helpers
+ * above are NOT excluded. */
 /** Fetch a message with just the metadata we need (fast, no body download). */
 async function getMessageMeta(auth: OAuth2Client, id: string) {
   const data = await gmailGet<any>(auth, `/messages/${id}`, {
@@ -78,6 +82,7 @@ async function searchMessages(auth: OAuth2Client, q: string, maxResults: number)
   }
   return out;
 }
+/* c8 ignore stop */
 
 /** Decode a Gmail API base64url body payload into a UTF-8 string. */
 function decodeBase64Url(data: string): string {
@@ -197,6 +202,8 @@ function buildRawEmail(opts: {
 }
 
 /** The most recent message in a thread — what a reply should thread onto. */
+/* c8 ignore start -- makes a real Gmail API call via gmailGet() (see the
+ * getMessageMeta/searchMessages note above). */
 async function getLastMessageInThread(auth: OAuth2Client, threadId: string) {
   const data = await gmailGet<any>(auth, `/threads/${threadId}`, {
     format: "metadata",
@@ -215,6 +222,7 @@ async function getLastMessageInThread(auth: OAuth2Client, threadId: string) {
     references: header(payload, "References"),
   };
 }
+/* c8 ignore stop */
 
 /** Extract a bare email address out of a "Name <addr@x.com>" From header. */
 function extractEmailAddress(fromHeader: string): string {

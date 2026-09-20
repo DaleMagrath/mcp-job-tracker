@@ -352,6 +352,12 @@ interface HttpResult {
   body: string;
 }
 
+/* c8 ignore start -- exercising this means a real outbound HTTP call to a
+ * live ATS endpoint; the test suite deliberately never does that (see
+ * README's Testing section). Everything below down to the matching "c8
+ * ignore stop" is a function whose entire body is that live call — the pure
+ * logic around it (title/location/salary matching, board-response parsing,
+ * candidate ranking) is NOT excluded and stays a real, visible gap. */
 /** GET or POST a URL; never throws — network failures come back as status 0. */
 async function httpFetch(
   url: string,
@@ -379,6 +385,7 @@ async function httpFetch(
   }
   return { status: 0, body: lastErr };
 }
+/* c8 ignore stop */
 
 const BOARD_URL: Partial<Record<Ats, string>> = {
   greenhouse: "https://boards-api.greenhouse.io/v1/boards/%s/jobs",
@@ -401,6 +408,9 @@ function wdCxs(token: string): string {
   return `https://${tenant}.${host}.myworkdayjobs.com/wday/cxs/${tenant}/${site}`;
 }
 
+/* c8 ignore start -- both functions below make a live outbound HTTP call
+ * (see the httpFetch note above); the pure wdParts()/wdCxs() helpers above
+ * and parseBoard() below are deliberately NOT excluded. */
 /** Page the CXS jobs endpoint into one synthetic board payload. Three
  *  Workday quirks drive this: POST-only, `limit` capped at 20, and the list
  *  view reports dates as relative prose — the real posted date has to come
@@ -442,7 +452,7 @@ async function fetchBoard(ats: Ats, token: string): Promise<HttpResult> {
   const template = BOARD_URL[ats];
   if (!template) return { status: 0, body: `unsupported ats: ${ats}` };
   return httpFetch(template.replace("%s", token));
-}
+} /* c8 ignore stop */
 
 /* ------------------------------------------------------------------ */
 /* Per-ATS parsing                                                     */
@@ -544,6 +554,8 @@ function parseBoard(company: string, ats: Ats, token: string, body: string): Pos
   return out;
 }
 
+/* c8 ignore start -- all three functions below make a live outbound HTTP
+ * call (see the httpFetch note above). */
 /** Fill comp_text/published for a surviving Greenhouse candidate. */
 async function greenhouseDetail(p: Posting): Promise<Posting> {
   const url = `https://boards-api.greenhouse.io/v1/boards/${p.token}/jobs/${p.jid}`;
@@ -585,7 +597,7 @@ async function workdayDetail(p: Posting): Promise<Posting> {
 
 async function fillDetail(p: Posting): Promise<Posting> {
   return p.ats === "workday" ? workdayDetail(p) : greenhouseDetail(p);
-}
+} /* c8 ignore stop */
 
 export type LiveStatus = "GONE" | "ok" | "blocked" | "unknown";
 
@@ -596,6 +608,9 @@ export type LiveStatus = "GONE" | "ok" | "blocked" | "unknown";
  *   200 -> 'ok', but weakly — a client-rendered career site returns 200 for
  *     a pulled posting too, so this is "not provably gone", not "confirmed".
  */
+/* c8 ignore start -- makes a live outbound HTTP call to the posting URL
+ * (see the httpFetch note above); its status->live classification is pure
+ * but entangled with the fetch in one small function, so it goes too. */
 async function checkLive(p: Posting & { liveStatus?: number; live?: LiveStatus }): Promise<void> {
   const { status } = await httpFetch(p.url, { timeoutMs: 15_000, retries: 0 });
   p.liveStatus = status;
@@ -604,6 +619,7 @@ async function checkLive(p: Posting & { liveStatus?: number; live?: LiveStatus }
   else if (status === 401 || status === 403 || status === 429) p.live = "blocked";
   else p.live = "unknown";
 }
+/* c8 ignore stop */
 
 /* ------------------------------------------------------------------ */
 /* Concurrency helper                                                  */

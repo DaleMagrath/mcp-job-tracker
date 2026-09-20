@@ -142,6 +142,11 @@ function wrapGmailError(err: any, action: string): never {
   );
 }
 
+/* c8 ignore start -- these three functions each make a real HTTPS call to
+ * the Gmail API via an authorized client; the test suite never runs with
+ * real Gmail credentials (see gmailTools.ts's "no real inbox" test notes),
+ * so they're structurally unreachable there. Pure helpers above (buildUrl,
+ * wrapGmailError, loadClientCredentials's parsing) are NOT excluded. */
 /** GET against the Gmail API (users/me/...), returning the parsed JSON body. */
 export async function gmailGet<T = any>(
   auth: OAuth2Client,
@@ -180,3 +185,4 @@ export async function getGmailAddress(): Promise<string> {
   const data = await gmailGet<{ emailAddress?: string }>(auth, "/profile");
   return data.emailAddress ?? "";
 }
+/* c8 ignore stop */
