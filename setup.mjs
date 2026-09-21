@@ -4,8 +4,11 @@
  *
  * What it does:
  *   1. Runs `npm install` and builds the TypeScript (unless --no-build).
- *   2. Locates this machine's Claude Desktop config (Windows / macOS / Linux).
- *   3. Backs the config up, then merges in a "job-tracker" mcpServers entry with
+ *   2. Locates every plausible Claude Desktop config on this machine (Windows /
+ *      macOS / Linux) — on Windows, that includes a Store-installed (MSIX)
+ *      Claude Desktop's sandboxed config location, not just the traditional
+ *      %APPDATA% one (see candidateConfigPaths() below for why both matter).
+ *   3. Backs each one up, then merges in a "job-tracker" mcpServers entry with
  *      absolute paths that are correct for THIS machine.
  *
  * Usage:
@@ -87,57 +90,91 @@ if (!fs.existsSync(xlsxPath)) {
   );
 }
 
-function claudeConfigPath() {
+/**
+ * Every plausible Claude Desktop config location on this machine.
+ *
+ * On Windows, a Store-installed (MSIX/packaged) Claude Desktop runs inside an
+ * app container: when it reads/writes what it thinks is
+ * "%APPDATA%\Claude\claude_desktop_config.json", Windows silently redirects
+ * that to an isolated per-package folder instead
+ * ("%LOCALAPPDATA%\Packages\Claude_<hash>\LocalCache\Roaming\Claude\..."). A
+ * plain script like this one has no such redirection, so writing only the
+ * traditional path leaves a Store install with no entry at all — the config
+ * gets written, just not to the file the app actually reads. Detect any such
+ * package folder (its existence alone proves a Store install is present,
+ * even before it has ever created its own config file) and write to it too.
+ */
+function candidateConfigPaths() {
   if (process.platform === "win32") {
     const appData = process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming");
-    return path.join(appData, "Claude", "claude_desktop_config.json");
+    const paths = [path.join(appData, "Claude", "claude_desktop_config.json")];
+
+    const localAppData = process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local");
+    const packagesDir = path.join(localAppData, "Packages");
+    try {
+      for (const name of fs.readdirSync(packagesDir)) {
+        if (/^Claude_/i.test(name)) {
+          paths.push(
+            path.join(packagesDir, name, "LocalCache", "Roaming", "Claude", "claude_desktop_config.json")
+          );
+        }
+      }
+    } catch {
+      /* no Packages dir, or unreadable — not a Store-app-aware machine, or none installed */
+    }
+    return paths;
   }
   if (process.platform === "darwin") {
-    return path.join(
-      os.homedir(),
-      "Library",
-      "Application Support",
-      "Claude",
-      "claude_desktop_config.json"
-    );
+    return [
+      path.join(os.homedir(), "Library", "Application Support", "Claude", "claude_desktop_config.json"),
+    ];
   }
   // Linux / other (Claude Desktop isn't officially here, but be predictable).
-  return path.join(os.homedir(), ".config", "Claude", "claude_desktop_config.json");
+  return [path.join(os.homedir(), ".config", "Claude", "claude_desktop_config.json")];
 }
 
-const cfgPath = claudeConfigPath();
+const cfgPaths = candidateConfigPaths();
+if (cfgPaths.length > 1) {
+  console.log(`[setup] Found ${cfgPaths.length} possible Claude Desktop config locations on this machine —`);
+  console.log("        writing the job-tracker entry into each, since only one is actually read:");
+  for (const p of cfgPaths) console.log(`          ${p}`);
+}
 
-/* 3. Merge into the config (backing up first) ----------------------- */
-let cfg = {};
-if (fs.existsSync(cfgPath)) {
-  const raw = fs.readFileSync(cfgPath, "utf8");
-  try {
-    cfg = raw.trim() ? JSON.parse(raw) : {};
-  } catch {
-    fail(
-      `${cfgPath} is not valid JSON. Refusing to overwrite it — please fix or ` +
-        "remove it, then re-run."
-    );
+/* 3. Merge into the config(s) (backing up first) --------------------- */
+function mergeInto(cfgPath) {
+  let cfg = {};
+  if (fs.existsSync(cfgPath)) {
+    const raw = fs.readFileSync(cfgPath, "utf8");
+    try {
+      cfg = raw.trim() ? JSON.parse(raw) : {};
+    } catch {
+      fail(
+        `${cfgPath} is not valid JSON. Refusing to overwrite it — please fix or ` +
+          "remove it, then re-run."
+      );
+    }
+    fs.copyFileSync(cfgPath, cfgPath + ".bak");
+    console.log(`[setup] Backed up existing config -> ${cfgPath}.bak`);
+  } else {
+    fs.mkdirSync(path.dirname(cfgPath), { recursive: true });
+    console.log(`[setup] No existing config; creating ${cfgPath}`);
   }
-  fs.copyFileSync(cfgPath, cfgPath + ".bak");
-  console.log(`[setup] Backed up existing config -> ${cfgPath}.bak`);
-} else {
-  fs.mkdirSync(path.dirname(cfgPath), { recursive: true });
-  console.log(`[setup] No existing config; creating ${cfgPath}`);
+
+  cfg.mcpServers = cfg.mcpServers || {};
+  cfg.mcpServers["job-tracker"] = {
+    command: bareNode ? "node" : process.execPath,
+    args: [distEntry],
+    env: { JOB_TRACKER_FILE: xlsxPath },
+  };
+
+  fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2) + "\n", "utf8");
 }
 
-cfg.mcpServers = cfg.mcpServers || {};
-cfg.mcpServers["job-tracker"] = {
-  command: bareNode ? "node" : process.execPath,
-  args: [distEntry],
-  env: { JOB_TRACKER_FILE: xlsxPath },
-};
-
-fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2) + "\n", "utf8");
+for (const cfgPath of cfgPaths) mergeInto(cfgPath);
 
 console.log("\n[setup] Done. Wired 'job-tracker' into Claude Desktop:");
 console.log("        server : " + distEntry);
 console.log("        node   : " + (bareNode ? "node (from PATH)" : process.execPath));
 console.log("        data   : " + xlsxPath);
-console.log("        config : " + cfgPath);
+for (const cfgPath of cfgPaths) console.log("        config : " + cfgPath);
 console.log("\n>> Fully quit and restart Claude Desktop to load the tools. <<");

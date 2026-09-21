@@ -184,6 +184,18 @@ fine without it.
   afterward.
 - Confirm `dist\index.js` actually exists — `npm run build` must have
   succeeded (step 4).
+- **Got Claude Desktop from the Microsoft Store rather than claude.ai/download?**
+  `setup.mjs` handles this automatically (it detects and writes to both
+  locations), but if you're on an older copy of this project, that's the
+  likely cause. A Store install is a sandboxed ("packaged") app: it can't see
+  `%APPDATA%\Claude\...` directly — Windows silently redirects its config
+  reads/writes to
+  `%LOCALAPPDATA%\Packages\Claude_<random-id>\LocalCache\Roaming\Claude\claude_desktop_config.json`
+  instead. `setup.mjs` writing only the traditional path leaves that file
+  untouched, so the app never sees the `job-tracker` entry even though the
+  script reported success. Fix: pull the latest `setup.mjs` and re-run it —
+  it now detects any `Claude_*` folder under `%LOCALAPPDATA%\Packages\` and
+  writes the entry there too.
 
 **A tool call fails with something about a locked or busy file.**
 Close `Job_Tracking.xlsx` in Excel first — the server can't write to a file
