@@ -27,6 +27,8 @@ process.env.JOB_DISCOVERY_FILE = path.join(dir, "Job_Search_Discovery.xlsx");
 const sweep = await import("./dist/sweepEngine.js");
 const gmailTools = await import("./dist/gmailTools.js");
 const gmailAuth = await import("./dist/gmailAuth.js");
+const xlsxFormat = await import("./dist/xlsxFormat.js");
+const ExcelJS = (await import("exceljs")).default;
 
 let passed = 0, failed = 0;
 const fails = [];
@@ -381,6 +383,56 @@ check(
     "read /messages"
   )) || "").includes("Invalid query")
 );
+
+/* ==================================================================== */
+/* xlsxFormat.ts                                                        */
+/* ==================================================================== */
+
+console.log("\n# xlsxFormat: _xlnm._FilterDatabase stays in sync with the sheet");
+{
+  const fixturePath = path.join(dir, "FilterDatabase_fixture.xlsx");
+
+  async function buildFixture(rowCount, staleFilterDbRange) {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("Discovery");
+    ws.addRow(["Date Found", "Company", "Position"]);
+    for (let r = 2; r <= rowCount; r++) ws.addRow([`2026-01-0${r}`, `Co${r}`, `Role${r}`]);
+    ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: rowCount, column: 3 } };
+    if (staleFilterDbRange) {
+      wb.definedNames.model = [{ name: "_xlnm._FilterDatabase", ranges: [staleFilterDbRange] }];
+    }
+    await wb.xlsx.writeFile(fixturePath);
+    return rowCount;
+  }
+
+  async function filterDbRanges() {
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.readFile(fixturePath);
+    return wb.definedNames.model.find((dn) => dn.name === "_xlnm._FilterDatabase")?.ranges ?? [];
+  }
+
+  // Simulates the real bug: a workbook whose _FilterDatabase name (from an
+  // earlier, shorter version of the sheet) is now stale relative to the data.
+  await buildFixture(10, "Discovery!$A$1:$C$6");
+  await xlsxFormat.formatWorkbookFile(fixturePath);
+  check(
+    "formatWorkbookFile corrects a stale _FilterDatabase range to match the current row count",
+    (await filterDbRanges())[0] === "Discovery!$A$1:$C$10"
+  );
+
+  // Simulates an append: reformat again after the sheet grows further.
+  await buildFixture(12, "Discovery!$A$1:$C$10");
+  await xlsxFormat.formatWorkbookFile(fixturePath);
+  check(
+    "formatWorkbookFile keeps _FilterDatabase in sync after more rows are appended",
+    (await filterDbRanges())[0] === "Discovery!$A$1:$C$12"
+  );
+
+  check(
+    "formatWorkbookFile leaves exactly one _FilterDatabase entry (no duplicates across runs)",
+    (await filterDbRanges()).length === 1
+  );
+}
 
 fs.rmSync(dir, { recursive: true, force: true });
 

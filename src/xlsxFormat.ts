@@ -64,6 +64,23 @@ export async function formatWorkbookFile(
     ws.views = [{ state: "frozen", ySplit: 1 }];
     ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: ws.rowCount, column: colCount } };
 
+    // exceljs's autoFilter setter only writes the worksheet-level <autoFilter>.
+    // It has no idea the workbook-level _xlnm._FilterDatabase defined name is
+    // supposed to track that same range, so on every read-modify-write cycle
+    // it just carries over whatever range that name already had — which goes
+    // stale the moment a row is appended, and a stale _FilterDatabase range is
+    // exactly what makes Excel flag the file as needing repair. Recompute it
+    // here so it always matches the autoFilter range we just set.
+    const lastColLetter = ws.getColumn(colCount).letter;
+    const filterDbRange = `'${ws.name}'!$A$1:$${lastColLetter}$${ws.rowCount}`;
+    const otherDefinedNames = wb.definedNames.model.filter(
+      (dn: { name: string }) => dn.name !== "_xlnm._FilterDatabase"
+    );
+    wb.definedNames.model = [
+      ...otherDefinedNames,
+      { name: "_xlnm._FilterDatabase", ranges: [filterDbRange] },
+    ];
+
     const longest = new Array(colCount).fill(0);
     for (let c = 1; c <= colCount; c++) {
       longest[c - 1] = Math.min(headers[c - 1]?.length ?? 0, MAX_SAMPLE_LEN);
