@@ -454,6 +454,35 @@ console.log("\n# xlsxFormat: _xlnm._FilterDatabase stays in sync with the sheet"
     "formatWorkbookFile marks _FilterDatabase hidden, matching Excel's own convention",
     /<definedName name="_xlnm\._FilterDatabase"[^>]*\bhidden="1"/.test(xml)
   );
+
+  // The second real bug (also confirmed against an actual corrupted user
+  // file, which real Excel refused to open cleanly even after the fix
+  // above): JSZip's generateAsync() defaults to STORE (no compression) for
+  // every entry unless told otherwise. Content stayed byte-identical
+  // (confirmed via CRC-32), so every other tool (unzip, this project's own
+  // SheetJS reader, PowerShell's XML parser) opened it fine — but an
+  // all-STORED xlsx is unusual enough that Excel's own stricter reader
+  // choked on it. Read the raw local file header's compression-method field
+  // directly (0 = stored, 8 = deflate) rather than trusting a
+  // library-level "did the content survive" check, which can't see this.
+  function compressionMethodOf(zipBuffer, entryName) {
+    const nameBuf = Buffer.from(entryName, "utf8");
+    let idx = 0;
+    while ((idx = zipBuffer.indexOf(nameBuf, idx)) !== -1) {
+      const headerStart = idx - 30;
+      if (headerStart >= 0 && zipBuffer.readUInt32LE(headerStart) === 0x04034b50) {
+        const nameLen = zipBuffer.readUInt16LE(headerStart + 26);
+        if (nameLen === nameBuf.length) return zipBuffer.readUInt16LE(headerStart + 8);
+      }
+      idx += 1;
+    }
+    return null;
+  }
+  const rawZipBuf = await fs.promises.readFile(fixturePath);
+  check(
+    "formatWorkbookFile's rewritten xlsx keeps entries Deflate-compressed, not Stored",
+    compressionMethodOf(rawZipBuf, "xl/worksheets/sheet1.xml") === 8
+  );
 }
 
 fs.rmSync(dir, { recursive: true, force: true });

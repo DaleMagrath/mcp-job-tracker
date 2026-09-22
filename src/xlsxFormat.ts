@@ -48,7 +48,18 @@ async function patchFilterDatabaseScope(filePath: string, sheetIndex: number): P
   if (patched === xml) return; // no _FilterDatabase name present; nothing to patch
 
   zip.file("xl/workbook.xml", patched);
-  const rezipped = await zip.generateAsync({ type: "nodebuffer" });
+  // JSZip defaults generateAsync() to STORE (no compression) for every entry
+  // unless told otherwise — confirmed by comparing a before/after zip listing
+  // (identical CRC-32s, but Defl:N -> Stored for every entry). Every other
+  // tool (unzip, PowerShell, SheetJS) tolerates that fine, but real Excel-
+  // written xlsx files always deflate their content parts, and an
+  // all-STORED archive is exactly the kind of otherwise-valid-but-unusual
+  // zip that a stricter reader can choke on. Match exceljs's own convention.
+  const rezipped = await zip.generateAsync({
+    type: "nodebuffer",
+    compression: "DEFLATE",
+    compressionOptions: { level: 6 },
+  });
   await fs.promises.writeFile(filePath, rezipped);
 }
 
