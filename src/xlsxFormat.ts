@@ -12,7 +12,9 @@
  * save — the same two-step shape the Python version had, just without Python.
  */
 
+import * as fs from "node:fs";
 import ExcelJS from "exceljs";
+import JSZip from "jszip";
 
 const HEADER_FILL = "FF305496";
 const HEADER_FONT_COLOR = "FFFFFFFF";
@@ -20,6 +22,35 @@ const LINK_COLOR = "FF0563C1";
 const MIN_WIDTH = 12;
 const MAX_WIDTH = 45;
 const MAX_SAMPLE_LEN = 60;
+
+/**
+ * exceljs's DefinedNames abstraction (wb.definedNames.model) has no concept
+ * of a name's scope at all — reading, storing, and re-writing a defined name
+ * always drops any `localSheetId` attribute it had. That's fatal specifically
+ * for `_xlnm._FilterDatabase`: Excel requires this reserved name to be scoped
+ * to the sheet that owns the autofilter (via localSheetId); written without
+ * it, it's a workbook-global name instead, which is exactly what makes Excel
+ * flag the file as needing repair — independent of whether the range itself
+ * is correct. exceljs's public API has no way to set this attribute, so it's
+ * patched directly into the already-written XML, the only place it exists.
+ */
+async function patchFilterDatabaseScope(filePath: string, sheetIndex: number): Promise<void> {
+  const buf = await fs.promises.readFile(filePath);
+  const zip = await JSZip.loadAsync(buf);
+  const entry = zip.file("xl/workbook.xml");
+  if (!entry) return;
+  const xml = await entry.async("string");
+
+  const patched = xml.replace(
+    /<definedName name="_xlnm\._FilterDatabase"(?:\s+hidden="[^"]*")?(?:\s+localSheetId="[^"]*")?>/,
+    `<definedName name="_xlnm._FilterDatabase" hidden="1" localSheetId="${sheetIndex}">`
+  );
+  if (patched === xml) return; // no _FilterDatabase name present; nothing to patch
+
+  zip.file("xl/workbook.xml", patched);
+  const rezipped = await zip.generateAsync({ type: "nodebuffer" });
+  await fs.promises.writeFile(filePath, rezipped);
+}
 
 function cellDisplayText(value: ExcelJS.CellValue): string {
   if (value == null) return "";
@@ -41,8 +72,10 @@ export async function formatWorkbookFile(
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.readFile(filePath);
     const ws = wb.worksheets[0];
+    const sheetIndex = wb.worksheets.indexOf(ws);
     if (!ws || ws.rowCount < 1 || ws.columnCount < 1) {
       await wb.xlsx.writeFile(filePath);
+      await patchFilterDatabaseScope(filePath, sheetIndex);
       return { ok: true };
     }
 
@@ -109,6 +142,7 @@ export async function formatWorkbookFile(
     }
 
     await wb.xlsx.writeFile(filePath);
+    await patchFilterDatabaseScope(filePath, sheetIndex);
     return { ok: true };
   } catch (err: any) {
     return { ok: false, detail: err?.message || String(err) };

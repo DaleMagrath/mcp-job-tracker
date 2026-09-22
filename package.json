@@ -24,6 +24,7 @@
     "docx": "^9.5.1",
     "exceljs": "^4.4.0",
     "google-auth-library": "^9.15.0",
+    "jszip": "^3.10.2",
     "mammoth": "^1.12.2",
     "pdf-parse": "^1.1.1",
     "pdf-to-printer": "^5.8.0",

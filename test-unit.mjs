@@ -29,6 +29,7 @@ const gmailTools = await import("./dist/gmailTools.js");
 const gmailAuth = await import("./dist/gmailAuth.js");
 const xlsxFormat = await import("./dist/xlsxFormat.js");
 const ExcelJS = (await import("exceljs")).default;
+const JSZip = (await import("jszip")).default;
 
 let passed = 0, failed = 0;
 const fails = [];
@@ -431,6 +432,27 @@ console.log("\n# xlsxFormat: _xlnm._FilterDatabase stays in sync with the sheet"
   check(
     "formatWorkbookFile leaves exactly one _FilterDatabase entry (no duplicates across runs)",
     (await filterDbRanges()).length === 1
+  );
+
+  // The real bug (confirmed against an actual corrupted user file): exceljs's
+  // definedNames.model has no concept of scope at all, so reading the range
+  // back through IT (as filterDbRanges() above does) can never catch a
+  // missing localSheetId — exceljs drops that attribute on both read and
+  // write. Check the raw XML directly instead, the same way Excel itself
+  // would parse it.
+  async function rawWorkbookXml() {
+    const buf = await fs.promises.readFile(fixturePath);
+    const zip = await JSZip.loadAsync(buf);
+    return zip.file("xl/workbook.xml").async("string");
+  }
+  const xml = await rawWorkbookXml();
+  check(
+    "formatWorkbookFile scopes _FilterDatabase to its sheet (localSheetId), not workbook-global",
+    /<definedName name="_xlnm\._FilterDatabase"[^>]*\blocalSheetId="0"/.test(xml)
+  );
+  check(
+    "formatWorkbookFile marks _FilterDatabase hidden, matching Excel's own convention",
+    /<definedName name="_xlnm\._FilterDatabase"[^>]*\bhidden="1"/.test(xml)
   );
 }
 
