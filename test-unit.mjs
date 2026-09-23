@@ -29,7 +29,6 @@ const gmailTools = await import("./dist/gmailTools.js");
 const gmailAuth = await import("./dist/gmailAuth.js");
 const xlsxFormat = await import("./dist/xlsxFormat.js");
 const ExcelJS = (await import("exceljs")).default;
-const JSZip = (await import("jszip")).default;
 
 let passed = 0, failed = 0;
 const fails = [];
@@ -389,100 +388,109 @@ check(
 /* xlsxFormat.ts                                                        */
 /* ==================================================================== */
 
-console.log("\n# xlsxFormat: _xlnm._FilterDatabase stays in sync with the sheet");
+console.log("\n# xlsxFormat: the SheetJS-then-exceljs handoff must yield a sheet Excel loads without repair");
 {
-  const fixturePath = path.join(dir, "FilterDatabase_fixture.xlsx");
+  // Regression coverage for the real "We found a problem with some content"
+  // corruption diagnosed from Excel's own recovery log ("sheet1.xml part with
+  // XML error. Load error. Line 2, column 0"): SheetJS writes no
+  // <sheetFormatPr>, exceljs then reads worksheet.properties back as {} and on
+  // write emits <sheetFormatPr customHeight="1"/> WITHOUT the defaultRowHeight
+  // attribute the OOXML schema requires. These assertions read the raw part XML
+  // (not exceljs's re-parsed model, which would paper over exactly this) so
+  // they fail on the bytes Excel actually rejects.
+  const JSZip = (await import("jszip")).default;
+  const fixturePath = path.join(dir, "Format_fixture.xlsx");
+  const HEADERS = ["Date Found", "Company", "Position", "Job Link"];
 
-  async function buildFixture(rowCount, staleFilterDbRange) {
-    const wb = new ExcelJS.Workbook();
-    const ws = wb.addWorksheet("Discovery");
-    ws.addRow(["Date Found", "Company", "Position"]);
-    for (let r = 2; r <= rowCount; r++) ws.addRow([`2026-01-0${r}`, `Co${r}`, `Role${r}`]);
-    ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: rowCount, column: 3 } };
-    if (staleFilterDbRange) {
-      wb.definedNames.model = [{ name: "_xlnm._FilterDatabase", ranges: [staleFilterDbRange] }];
+  // Written the way workbook.ts writes: SheetJS, no `sheetFormat` option.
+  function writeSheetJsFixture(rowCount) {
+    const aoa = [HEADERS];
+    for (let r = 2; r <= rowCount; r++) {
+      aoa.push([`2026-01-${String(r).padStart(2, "0")}`, `Co${r}`, `Role${r}`, `https://example.com/jobs/${r}`]);
     }
-    await wb.xlsx.writeFile(fixturePath);
-    return rowCount;
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), "Discovery");
+    XLSX.writeFile(wb, fixturePath);
   }
-
-  async function filterDbRanges() {
+  async function rawPart(name) {
+    const zip = await JSZip.loadAsync(fs.readFileSync(fixturePath));
+    return zip.file(name).async("string");
+  }
+  async function readBack() {
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.readFile(fixturePath);
-    return wb.definedNames.model.find((dn) => dn.name === "_xlnm._FilterDatabase")?.ranges ?? [];
+    return { ws: wb.worksheets[0], definedNames: wb.definedNames.model };
+  }
+  function sheetFormatPrAttrs(xml) {
+    const m = xml.match(/<sheetFormatPr\b([^>]*?)\/?>/);
+    return m ? m[1] : null;
   }
 
-  // Simulates the real bug: a workbook whose _FilterDatabase name (from an
-  // earlier, shorter version of the sheet) is now stale relative to the data.
-  await buildFixture(10, "Discovery!$A$1:$C$6");
-  await xlsxFormat.formatWorkbookFile(fixturePath);
+  writeSheetJsFixture(10);
   check(
-    "formatWorkbookFile corrects a stale _FilterDatabase range to match the current row count",
-    (await filterDbRanges())[0] === "Discovery!$A$1:$C$10"
+    "precondition: SheetJS itself writes no <sheetFormatPr> (the input exceljs mishandles)",
+    !/<sheetFormatPr/.test(await rawPart("xl/worksheets/sheet1.xml"))
   );
 
-  // Simulates an append: reformat again after the sheet grows further.
-  await buildFixture(12, "Discovery!$A$1:$C$10");
-  await xlsxFormat.formatWorkbookFile(fixturePath);
-  check(
-    "formatWorkbookFile keeps _FilterDatabase in sync after more rows are appended",
-    (await filterDbRanges())[0] === "Discovery!$A$1:$C$12"
-  );
+  const res = await xlsxFormat.formatWorkbookFile(fixturePath);
+  check("formatWorkbookFile succeeds on a SheetJS-written file", res.ok === true, res.detail);
+  {
+    const xml = await rawPart("xl/worksheets/sheet1.xml");
+    const attrs = sheetFormatPrAttrs(xml);
+    const height = attrs?.match(/\bdefaultRowHeight="([^"]+)"/);
+    check(
+      "<sheetFormatPr> carries the schema-required defaultRowHeight (the Excel 'Load error. Line 2' regression)",
+      !!height && Number(height[1]) > 0,
+      attrs ?? "(no <sheetFormatPr> written)"
+    );
+    check("<sheetFormatPr> is not flagged customHeight when it just uses Excel's default", !/customHeight="1"/.test(attrs ?? ""), attrs);
+    check("<autoFilter> covers the whole table", /<autoFilter ref="A1:D10"\/>/.test(xml));
+    check("<sheetViews> freezes the header row", /<pane\b[^>]*\bySplit="1"[^>]*\bstate="frozen"/.test(xml));
+    check("<cols> column widths are written", /<cols>.*<col\b[^>]*\bwidth="[^"]+"/.test(xml));
+    check(
+      "no _xlnm._FilterDatabase is written (exceljs can't scope it; Excel recreates it on save)",
+      !/_xlnm\._FilterDatabase/.test(await rawPart("xl/workbook.xml"))
+    );
 
-  check(
-    "formatWorkbookFile leaves exactly one _FilterDatabase entry (no duplicates across runs)",
-    (await filterDbRanges()).length === 1
-  );
-
-  // The real bug (confirmed against an actual corrupted user file): exceljs's
-  // definedNames.model has no concept of scope at all, so reading the range
-  // back through IT (as filterDbRanges() above does) can never catch a
-  // missing localSheetId — exceljs drops that attribute on both read and
-  // write. Check the raw XML directly instead, the same way Excel itself
-  // would parse it.
-  async function rawWorkbookXml() {
-    const buf = await fs.promises.readFile(fixturePath);
-    const zip = await JSZip.loadAsync(buf);
-    return zip.file("xl/workbook.xml").async("string");
+    const { ws } = await readBack();
+    const headerCell = ws.getRow(1).getCell(1);
+    check("header row is bold", headerCell.font?.bold === true);
+    check("header row is filled", headerCell.fill?.fgColor?.argb === "FF305496");
+    check("Job Link cells become hyperlinks", typeof ws.getRow(2).getCell(4).value?.hyperlink === "string");
+    check("every column gets at least the minimum width", [1, 2, 3, 4].every((c) => (ws.getColumn(c).width ?? 0) >= 12));
   }
-  const xml = await rawWorkbookXml();
-  check(
-    "formatWorkbookFile scopes _FilterDatabase to its sheet (localSheetId), not workbook-global",
-    /<definedName name="_xlnm\._FilterDatabase"[^>]*\blocalSheetId="0"/.test(xml)
-  );
-  check(
-    "formatWorkbookFile marks _FilterDatabase hidden, matching Excel's own convention",
-    /<definedName name="_xlnm\._FilterDatabase"[^>]*\bhidden="1"/.test(xml)
-  );
 
-  // The second real bug (also confirmed against an actual corrupted user
-  // file, which real Excel refused to open cleanly even after the fix
-  // above): JSZip's generateAsync() defaults to STORE (no compression) for
-  // every entry unless told otherwise. Content stayed byte-identical
-  // (confirmed via CRC-32), so every other tool (unzip, this project's own
-  // SheetJS reader, PowerShell's XML parser) opened it fine — but an
-  // all-STORED xlsx is unusual enough that Excel's own stricter reader
-  // choked on it. Read the raw local file header's compression-method field
-  // directly (0 = stored, 8 = deflate) rather than trusting a
-  // library-level "did the content survive" check, which can't see this.
-  function compressionMethodOf(zipBuffer, entryName) {
-    const nameBuf = Buffer.from(entryName, "utf8");
-    let idx = 0;
-    while ((idx = zipBuffer.indexOf(nameBuf, idx)) !== -1) {
-      const headerStart = idx - 30;
-      if (headerStart >= 0 && zipBuffer.readUInt32LE(headerStart) === 0x04034b50) {
-        const nameLen = zipBuffer.readUInt16LE(headerStart + 26);
-        if (nameLen === nameBuf.length) return zipBuffer.readUInt16LE(headerStart + 8);
-      }
-      idx += 1;
-    }
-    return null;
+  // Real files go through this pass on every sync — a second cycle must stay
+  // valid too (exceljs now reads back the <sheetFormatPr> it wrote).
+  {
+    const res2 = await xlsxFormat.formatWorkbookFile(fixturePath);
+    const xml = await rawPart("xl/worksheets/sheet1.xml");
+    check("second formatting pass still succeeds", res2.ok === true, res2.detail);
+    check("second pass keeps a positive defaultRowHeight", /\bdefaultRowHeight="([1-9][^"]*)"/.test(sheetFormatPrAttrs(xml) ?? ""));
+    check("second pass keeps the autoFilter range in sync", /<autoFilter ref="A1:D10"\/>/.test(xml));
   }
-  const rawZipBuf = await fs.promises.readFile(fixturePath);
-  check(
-    "formatWorkbookFile's rewritten xlsx keeps entries Deflate-compressed, not Stored",
-    compressionMethodOf(rawZipBuf, "xl/worksheets/sheet1.xml") === 8
-  );
+
+  // A file that already declares a valid, non-default row height (e.g. one
+  // Excel or openpyxl saved) keeps it, and any _xlnm._FilterDatabase a prior
+  // writer left behind is stripped rather than carried forward mis-scoped.
+  {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("Discovery");
+    ws.properties.defaultRowHeight = 20;
+    ws.addRow(HEADERS);
+    ws.addRow(["2026-02-01", "Co", "Role", "https://example.com/x"]);
+    wb.definedNames.model = [{ name: "_xlnm._FilterDatabase", ranges: ["Discovery!$A$1:$D$2"] }];
+    await wb.xlsx.writeFile(fixturePath);
+
+    const res3 = await xlsxFormat.formatWorkbookFile(fixturePath);
+    check("formatting a file with an existing row height succeeds", res3.ok === true, res3.detail);
+    const attrs = sheetFormatPrAttrs(await rawPart("xl/worksheets/sheet1.xml"));
+    check("an existing valid defaultRowHeight is preserved, not clobbered", /\bdefaultRowHeight="20"/.test(attrs ?? ""), attrs);
+    check(
+      "a pre-existing _xlnm._FilterDatabase is stripped",
+      !/_xlnm\._FilterDatabase/.test(await rawPart("xl/workbook.xml"))
+    );
+  }
 }
 
 fs.rmSync(dir, { recursive: true, force: true });
